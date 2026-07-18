@@ -3,6 +3,7 @@ if ( ! defined( 'ABSPATH' ) ) exit;
 
 add_action( 'admin_menu', 'li_register_manual_page', 20 );
 function li_register_manual_page() {
+    remove_submenu_page( 'li-rescues', 'li-manual' );
     add_submenu_page(
         'li-rescues',
         'Operations Manual',
@@ -27,7 +28,6 @@ function li_page_manual() {
     }
 
     echo '<div class="wrap li-manual-page">';
-    echo '<h1>Larry Impact Operations Manual</h1>';
     echo '<div style="max-width:1000px;background:#fff;border:1px solid #ddd;padding:24px;border-radius:6px;">';
     echo li_markdown_to_html( $md );
     echo '</div></div>';
