@@ -201,8 +201,6 @@ function li_rescue_profile_shortcode() {
     }
     $nonce   = wp_create_nonce( 'li_media_upload' );
     $ajax_js = esc_js( admin_url( 'admin-ajax.php' ) );
-    $url_js  = esc_js( LI_DB_URL );
-    $key_js  = esc_js( LI_DB_KEY );
     $rid_js  = $rescue ? esc_js( $rescue['id'] ) : '';
     ob_start();
     li_rescue_styles();
@@ -259,7 +257,7 @@ function li_rescue_profile_shortcode() {
         var sid=field==="logo_url"?"li-rd-logo-status":"li-rd-hero-status";
         var iid=field==="logo_url"?"li-rd-logo-img":"li-rd-hero-img";
         document.getElementById(sid).textContent="Uploading...";
-        var fd=new FormData();fd.append("action","li_media_upload");fd.append("li_file",input.files[0]);fd.append("li_nonce",LI_NONCE);
+        var fd=new FormData();fd.append("action","li_media_upload");fd.append("li_file",input.files[0]);fd.append("li_nonce",LI_NONCE);fd.append("rescue_id",rid);
         try{
             var res=await fetch(LI_AJAX,{method:"POST",body:fd});var data=await res.json();
             if(data.success&&data.data.url){

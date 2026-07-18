@@ -44,8 +44,6 @@ function li_page_rescues() {
 
 function li_page_rescue_list() {
     ob_start();
-    $url = esc_js( LI_DB_URL );
-    $key = esc_js( LI_DB_KEY );
     $base = esc_js( admin_url( 'admin.php?page=li-rescues&rescue_id=' ) );
 
     echo '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:12px;">';
@@ -107,8 +105,6 @@ function li_page_rescue_detail( $view_id ) {
         li_admin_wrap( 'Rescues', '<a href="' . admin_url( 'admin.php?page=li-rescues' ) . '" class="li-back">Back to rescues</a><p>Rescue not found.</p>' );
         return;
     }
-    $url_js  = esc_js( LI_DB_URL );
-    $key_js  = esc_js( LI_DB_KEY );
     $rid_js  = esc_js( $view_id );
     $nonce   = wp_create_nonce( 'li_media_upload' );
     $ajax_js = esc_js( admin_url( 'admin-ajax.php' ) );
@@ -335,6 +331,7 @@ function li_page_rescue_detail( $view_id ) {
         fd.append("action","li_media_upload");
         fd.append("li_file",input.files[0]);
         fd.append("li_nonce",LI_NONCE);
+        fd.append("rescue_id",rescueId);
         try{
             var res=await fetch(LI_AJAX,{method:"POST",body:fd});
             var data=await res.json();

@@ -3,8 +3,6 @@ if ( ! defined( 'ABSPATH' ) ) exit;
 
 function li_page_splits() {
     ob_start();
-    $url = esc_js( LI_DB_URL );
-    $key = esc_js( LI_DB_KEY );
     echo '<div class="li-stat-grid">';
     echo '<div class="li-stat"><div class="li-stat-val" id="li-kpi-orders">--</div><div class="li-stat-label">Total orders</div></div>';
     echo '<div class="li-stat"><div class="li-stat-val li-stat-val-amber" id="li-kpi-revenue">--</div><div class="li-stat-label">Total revenue</div></div>';

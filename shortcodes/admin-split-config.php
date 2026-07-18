@@ -3,8 +3,6 @@ if ( ! defined( 'ABSPATH' ) ) exit;
 
 function li_page_split_config() {
     ob_start();
-    $url          = esc_js( LI_DB_URL );
-    $key          = esc_js( LI_DB_KEY );
     $default_net  = floatval( get_option( 'li_default_split', 55 ) );
     $default_net_js = esc_js( $default_net );
     echo '<p style="font-size:13px;color:#6b6560;margin-bottom:20px;">Set the rescue share for each product. Larry gets the remainder after cost and the rescue share. Values are gross percentages of the sale price.</p>';

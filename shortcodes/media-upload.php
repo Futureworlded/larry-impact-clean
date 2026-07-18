@@ -50,6 +50,17 @@ function li_handle_media_upload() {
     if ( ! isset( $_POST['li_nonce'] ) || ! wp_verify_nonce( $_POST['li_nonce'], 'li_media_upload' ) ) {
         wp_send_json_error( array( 'message' => 'Security check failed.' ) );
     }
+    $rid = sanitize_text_field( $_POST['rescue_id'] ?? '' );
+    if ( ! $rid ) {
+        wp_send_json_error( array( 'message' => 'Missing rescue.' ) );
+    }
+    if ( ! current_user_can( 'manage_options' ) ) {
+        $user   = wp_get_current_user();
+        $rescue = li_get_rescue_by_email( $user->user_email );
+        if ( ! $rescue || $rescue['id'] !== $rid ) {
+            wp_send_json_error( array( 'message' => 'Unauthorized.' ) );
+        }
+    }
     if ( empty( $_FILES['li_file'] ) ) {
         wp_send_json_error( array( 'message' => 'No file received.' ) );
     }

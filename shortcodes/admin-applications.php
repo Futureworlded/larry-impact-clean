@@ -97,8 +97,6 @@ function li_page_applications() {
     $nonce = wp_create_nonce( 'li_approve_rescue' );
     $ajax  = esc_js( admin_url( 'admin-ajax.php' ) );
     ob_start();
-    $url = esc_js( LI_DB_URL );
-    $key = esc_js( LI_DB_KEY );
 
     echo '<div class="li-tabs">';
     echo '<button class="li-tab li-tab-active" onclick="liAppTab(\'pending\',this)">Pending <span id="li-pending-count" style="background:#fef3e2;color:#9a6f2a;border-radius:20px;padding:1px 8px;font-size:11px;margin-left:4px;">0</span></button>';
