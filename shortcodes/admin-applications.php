@@ -44,7 +44,7 @@ function li_ajax_approve_rescue() {
         }
     }
     if ( $user && ! in_array( 'administrator', $user->roles ) ) {
-        wp_update_user( array( 'ID' => $user->ID, 'role' => 'subscriber' ) );
+        wp_update_user( array( 'ID' => $user->ID, 'role' => 'rescue_partner' ) );
     }
 
     // Publish / update the rescue partner page.

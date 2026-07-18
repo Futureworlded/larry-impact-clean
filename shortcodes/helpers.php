@@ -272,7 +272,7 @@ function li_create_rescue_wp_user( $name, $email, $send_email = true ) {
     $user  = get_user_by( 'email', $email );
     if ( $user ) {
         if ( ! in_array( 'administrator', $user->roles, true ) ) {
-            wp_update_user( array( 'ID' => $user->ID, 'role' => 'subscriber' ) );
+            wp_update_user( array( 'ID' => $user->ID, 'role' => 'rescue_partner' ) );
         }
         return array( 'user_id' => $user->ID, 'password' => '', 'message' => 'Existing user updated.' );
     }
@@ -291,7 +291,7 @@ function li_create_rescue_wp_user( $name, $email, $send_email = true ) {
     }
     $user = get_user_by( 'id', $user_id );
     if ( $user && ! in_array( 'administrator', $user->roles, true ) ) {
-        wp_update_user( array( 'ID' => $user->ID, 'role' => 'subscriber' ) );
+        wp_update_user( array( 'ID' => $user->ID, 'role' => 'rescue_partner' ) );
     }
     if ( $send_email && $password ) {
         $login_url = home_url( '/rescue-login/' );
