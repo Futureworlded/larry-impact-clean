@@ -326,4 +326,3 @@ This page lets you generate or refresh the public profile pages for each approve
 - **Always verify a rescue's payout details before approving a batch.** If a rescue has not connected a payment account, the transfer will fail.
 - **Payouts are not automatic until the payment company connection is fully configured.** A manual approval step is required for each batch.
 - **Keep the ledger export for accounting.** The CSV export in Reports is the official record of sales, payouts, refunds, and adjustments.
-- **Contact the platform manager or developer if you need to change payment keys, currencies, or the minimum payout threshold.** These affect real money and should be handled carefully.
