@@ -12,6 +12,8 @@ function li_page_settings() {
         update_option( 'li_reply_to',        sanitize_email( $_POST['li_reply_to'] ?? '' ) );
         update_option( 'li_auto_confirm',   isset( $_POST['li_auto_confirm'] ) ? 1 : 0 );
         update_option( 'li_min_payout',      floatval( $_POST['li_min_payout'] ?? 25 ) );
+        update_option( 'li_currency',      strtoupper( sanitize_text_field( $_POST['li_currency'] ?? 'USD' ) ) );
+        update_option( 'li_currency_symbol', sanitize_text_field( $_POST['li_currency_symbol'] ?? '$' ) );
         update_option( 'li_service_key',    sanitize_text_field( $_POST['li_service_key'] ?? '' ) );
         update_option( 'li_stripe_sk',      sanitize_text_field( $_POST['li_stripe_sk'] ?? '' ) );
         update_option( 'li_stripe_pk',      sanitize_text_field( $_POST['li_stripe_pk'] ?? '' ) );
@@ -73,9 +75,15 @@ function li_page_settings() {
     echo '<label class="li-toggle"><input type="checkbox" name="li_auto_confirm" ' . checked( get_option( 'li_auto_confirm', 1 ), 1, false ) . ' /><span class="li-slider"></span></label>';
     echo '</div></div>';
     echo '<div class="li-card"><div class="li-card-title">Payouts</div>';
-    echo '<div class="li-field" style="max-width:200px;"><label class="li-label">Minimum payout threshold ($)</label>';
+    echo '<div class="li-row"><div class="li-field" style="max-width:200px;"><label class="li-label">Minimum payout threshold</label>';
     echo '<input class="li-input" type="number" name="li_min_payout" min="0" step="0.01" value="' . esc_attr( get_option( 'li_min_payout', 25 ) ) . '" />';
     echo '<div class="li-hint">Minimum amount before a payout is triggered.</div></div>';
+    echo '<div class="li-field" style="max-width:120px;"><label class="li-label">Currency code</label>';
+    echo '<input class="li-input" type="text" name="li_currency" value="' . esc_attr( get_option( 'li_currency', 'USD' ) ) . '" />';
+    echo '<div class="li-hint">ISO code (USD, EUR, etc.)</div></div>';
+    echo '<div class="li-field" style="max-width:80px;"><label class="li-label">Symbol</label>';
+    echo '<input class="li-input" type="text" name="li_currency_symbol" value="' . esc_attr( get_option( 'li_currency_symbol', '$' ) ) . '" />';
+    echo '<div class="li-hint">$</div></div></div>';
     echo '<div style="background:#f9f7f4;border:1px solid #e8e3db;border-radius:8px;padding:14px 16px;font-size:12px;color:#6b6560;line-height:1.6;"><strong>Payout method:</strong> Manual for now. Direct deposit via Stripe Connect will be configured per rescue when they complete their account setup.</div>';
     echo '</div>';
     echo '<button class="li-btn" type="submit">Save settings</button>';

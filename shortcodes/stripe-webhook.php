@@ -127,7 +127,7 @@ function li_handle_stripe_payout_paid( $object ) {
         }
         $rescue_id  = $rescue['id'] ?? '';
         $order_refs = array( 'bulk_' . $transfer_id );
-        $payout_id  = li_create_payout( $rescue_id, $order_refs, $amount_cents, $transfer_id, 'completed' );
+        $payout_id  = li_create_payout( $rescue_id, $order_refs, $amount_cents, $transfer_id, 'completed', array( $amount_cents ) );
         li_record_ledger( 'payout', array(
             'order_ref'    => 'payout_' . $payout_id,
             'rescue_id'    => $rescue_id,

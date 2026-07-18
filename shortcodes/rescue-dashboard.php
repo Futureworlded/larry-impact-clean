@@ -2,7 +2,7 @@
 if ( ! defined( 'ABSPATH' ) ) exit;
 
 function li_rescue_auth() {
-    if ( ! is_user_logged_in() ) {
+    if ( ! is_user_logged_in() || ( ! current_user_can( 'li_view_rescue_dashboard' ) && ! current_user_can( 'manage_options' ) ) ) {
         wp_redirect( home_url( '/rescue-login/' ) );
         exit;
     }

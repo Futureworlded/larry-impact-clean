@@ -143,6 +143,11 @@ function li_ajax_save_split_config() {
     if ( is_wp_error( $r ) || wp_remote_retrieve_response_code( $r ) >= 400 ) {
         wp_send_json_error( array( 'message' => wp_remote_retrieve_response_code( $r ) . ' ' . wp_remote_retrieve_body( $r ) ) );
     }
+    $product = li_get_product_by_id( $product_id );
+    $price = max( 1, intval( $product['price_cents'] ?? 0 ) );
+    $cost  = max( 0, intval( $product['cost_cents'] ?? 0 ) );
+    $cost_percent = ( $cost / $price ) * 100;
+    li_create_split_version( $product_id, $rp, $lp, round( $cost_percent, 4 ) );
     wp_send_json_success();
 }
 

@@ -9,6 +9,18 @@ function li_service_key() {
     return $key ? $key : LI_DB_KEY;
 }
 
+function li_currency() {
+    return strtoupper( sanitize_text_field( get_option( 'li_currency', 'USD' ) ) );
+}
+
+function li_currency_symbol() {
+    return get_option( 'li_currency_symbol', '$' );
+}
+
+function li_format_money( $cents ) {
+    return li_currency_symbol() . number_format( intval( $cents ) / 100, 2 );
+}
+
 function li_db_get( $endpoint ) {
     $key = li_service_key();
     $response = wp_remote_get( LI_DB_URL . '/rest/v1/' . $endpoint, array(
@@ -182,7 +194,7 @@ function li_ajax_rescue_get_orders() {
 }
 
 function li_money( $cents ) {
-    return '$' . number_format( $cents / 100, 2 );
+    return li_format_money( $cents );
 }
 
 function li_badge( $status ) {
@@ -262,8 +274,8 @@ function li_check_payout_threshold( $rescue_id ) {
     $rescue = li_get_rescue_by_id( $rescue_id );
     $name   = $rescue ? ( $rescue['name'] ?? 'A rescue' ) : 'A rescue';
     li_notify_admin(
-        'Pending payout exceeds $500: ' . $name,
-        "Rescue: {$name}\nPending payout balance: $" . number_format( $total_cents / 100, 2 ) . "\n\nReview payouts: " . admin_url( 'admin.php?page=li-payouts' )
+        'Pending payout exceeds ' . li_format_money( 50000 ) . ': ' . $name,
+        "Rescue: {$name}\nPending payout balance: " . li_format_money( $total_cents ) . "\n\nReview payouts: " . admin_url( 'admin.php?page=li-payouts' )
     );
 }
 
@@ -331,84 +343,134 @@ function li_award_rescue_points( $rescue_id, $points ) {
     }
 }
 
-function li_process_rescue_payout( $rescue ) {
+function li_prepare_rescue_payout( $rescue ) {
     $rescue_id = $rescue['id'] ?? '';
-    $stripe_account_id = $rescue['stripe_account_id'] ?? '';
-    if ( ! $rescue_id || ! $stripe_account_id ) {
-        return array( 'success' => false, 'message' => 'No Stripe account on file for this rescue.' );
+    if ( ! $rescue_id ) {
+        return array( 'success' => false, 'message' => 'Invalid rescue.' );
     }
     $pending = li_db_get( 'orders?rescue_id=eq.' . urlencode( $rescue_id ) . '&status=eq.pending&select=*' );
     if ( is_wp_error( $pending ) ) {
         return array( 'success' => false, 'message' => 'Could not load pending orders.' );
     }
-    $pending = array_filter( $pending, function( $o ) { return ( $o['status'] ?? '' ) === 'pending'; } );
+    $pending = array_filter( $pending, function( $o ) { return in_array( $o['status'] ?? '', array( 'pending' ), true ); } );
     if ( empty( $pending ) ) {
         return array( 'success' => true, 'message' => 'No pending orders for ' . ( $rescue['name'] ?? 'rescue' ) . '.' );
     }
     $total_cents = array_sum( array_map( function( $o ) { return intval( $o['rescue_split_cents'] ?? 0 ); }, $pending ) );
-    $min_dollars = floatval( get_option( 'li_min_payout', 100 ) );
+    $min_dollars = floatval( get_option( 'li_min_payout', 25 ) );
     $min_cents   = max( 0, intval( $min_dollars * 100 ) );
     if ( $total_cents < $min_cents ) {
-        return array( 'success' => false, 'message' => 'Balance $' . ( $total_cents / 100 ) . ' is below the $' . number_format( $min_dollars, 2 ) . ' minimum payout.' );
+        return array( 'success' => false, 'message' => 'Balance ' . li_format_money( $total_cents ) . ' is below the ' . li_format_money( $min_cents ) . ' minimum payout.' );
     }
+
+    $order_refs = array_map( function( $o ) { return sanitize_text_field( $o['shopify_order_id'] ?? '' ); }, $pending );
+    $line_amounts = array_map( function( $o ) { return intval( $o['rescue_split_cents'] ?? 0 ); }, $pending );
+    $payout_id = li_create_payout( $rescue_id, $order_refs, $total_cents, '', 'ready', $line_amounts );
+    if ( ! $payout_id ) {
+        return array( 'success' => false, 'message' => 'Could not create payout batch.' );
+    }
+
+    foreach ( $pending as $o ) {
+        $order_ref = sanitize_text_field( $o['shopify_order_id'] ?? '' );
+        if ( $order_ref ) {
+            li_lock_order( $order_ref );
+        }
+        if ( ! empty( $o['id'] ) ) {
+            li_db_patch( 'orders?id=eq.' . urlencode( $o['id'] ), array( 'status' => 'ready_for_payout' ) );
+        }
+    }
+
+    li_audit_log( 'payout_prepared', array( 'payout_id' => $payout_id, 'rescue_id' => $rescue_id, 'amount_cents' => $total_cents ), 'payout', $payout_id );
+    li_notify_admin(
+        'Payout batch ready for review',
+        'Rescue: ' . ( $rescue['name'] ?? 'Rescue' ) . "\nAmount: " . li_format_money( $total_cents ) . "\nReview: " . admin_url( 'admin.php?page=li-payouts' )
+    );
+
+    return array( 'success' => true, 'message' => 'Batch #' . $payout_id . ' prepared for ' . li_format_money( $total_cents ) . '.', 'payout_id' => $payout_id );
+}
+
+function li_process_payout_batch( $payout_id ) {
+    global $wpdb;
+    $payout = li_get_payout( $payout_id );
+    if ( ! $payout ) {
+        return array( 'success' => false, 'message' => 'Payout batch not found.' );
+    }
+    if ( ! in_array( $payout['status'], array( 'ready', 'approved' ), true ) ) {
+        return array( 'success' => false, 'message' => 'Payout batch is not ready for approval.' );
+    }
+    $rescue = li_get_rescue_by_id( $payout['rescue_id'] );
+    if ( ! $rescue ) {
+        return array( 'success' => false, 'message' => 'Rescue not found.' );
+    }
+    $rescue_id = $rescue['id'] ?? '';
+    $stripe_account_id = $rescue['stripe_account_id'] ?? '';
+    if ( ! $rescue_id || ! $stripe_account_id ) {
+        return array( 'success' => false, 'message' => 'No Stripe account on file for this rescue.' );
+    }
+    $total_cents = intval( $payout['amount_cents'] );
     $sk = li_stripe_sk();
     if ( ! $sk ) {
         return array( 'success' => false, 'message' => 'Stripe secret key is not configured.' );
     }
+
     $r = wp_remote_post( 'https://api.stripe.com/v1/transfers', array(
         'headers' => array(
             'Authorization' => 'Bearer ' . $sk,
         ),
         'body'    => array(
             'amount'      => $total_cents,
-            'currency'    => 'usd',
+            'currency'    => strtolower( li_currency() ),
             'destination' => $stripe_account_id,
         ),
     ) );
     $response_code = wp_remote_retrieve_response_code( $r );
     $body          = json_decode( wp_remote_retrieve_body( $r ), true );
     if ( is_wp_error( $r ) || $response_code >= 400 ) {
-        li_audit_log( 'payout_stripe_failed', array( 'rescue_id' => $rescue_id, 'response' => $body ), 'payout', $rescue_id );
+        li_audit_log( 'payout_stripe_failed', array( 'payout_id' => $payout_id, 'rescue_id' => $rescue_id, 'response' => $body ), 'payout', $payout_id );
         $error = is_wp_error( $r ) ? $r->get_error_message() : ( $body['error']['message'] ?? 'Stripe transfer failed.' );
         li_notify_admin(
             'Payout failed: ' . ( $rescue['name'] ?? 'Rescue' ),
-            "Rescue: " . ( $rescue['name'] ?? 'Rescue' ) . "\nAmount: $" . number_format( $total_cents / 100, 2 ) . "\nError: $error\n\nReview payouts: " . admin_url( 'admin.php?page=li-payouts' )
+            "Rescue: " . ( $rescue['name'] ?? 'Rescue' ) . "\nAmount: " . li_format_money( $total_cents ) . "\nError: $error\n\nReview payouts: " . admin_url( 'admin.php?page=li-payouts' )
         );
         return array( 'success' => false, 'message' => $error );
     }
     $transfer_id = $body['id'] ?? '';
 
-    global $wpdb;
-    $dup = $wpdb->get_var( $wpdb->prepare( "SELECT id FROM {$wpdb->prefix}li_payouts WHERE transfer_id = %s LIMIT 1", $transfer_id ) );
+    $dup = $wpdb->get_var( $wpdb->prepare( "SELECT id FROM {$wpdb->prefix}li_payouts WHERE transfer_id = %s AND id != %d LIMIT 1", $transfer_id, $payout_id ) );
     if ( $dup ) {
         li_flag_fraud( 'duplicate_payout', array( 'rescue_id' => $rescue_id, 'transfer_id' => $transfer_id ) );
         return array( 'success' => false, 'message' => 'This Stripe transfer has already been recorded.' );
     }
 
-    $order_refs = array_map( function( $o ) { return sanitize_text_field( $o['shopify_order_id'] ?? '' ); }, $pending );
-    $payout_id = li_create_payout( $rescue_id, $order_refs, $total_cents, $transfer_id, 'pending' );
+    li_update_payout_status( $payout_id, 'approved', 'Transfer initiated: ' . $transfer_id );
+    $wpdb->update(
+        $wpdb->prefix . 'li_payouts',
+        array( 'transfer_id' => sanitize_text_field( $transfer_id ) ),
+        array( 'id' => $payout_id ),
+        array( '%s' ),
+        array( '%d' )
+    );
 
-    foreach ( $pending as $o ) {
-        $order_ref = sanitize_text_field( $o['shopify_order_id'] ?? '' );
-        $wpdb->update(
-            $wpdb->prefix . 'li_payout_lines',
-            array( 'amount_cents' => intval( $o['rescue_split_cents'] ?? 0 ) ),
-            array( 'payout_id' => $payout_id, 'order_ref' => $order_ref ),
-            array( '%d' ),
-            array( '%d', '%s' )
-        );
+    $lines = $wpdb->get_results( $wpdb->prepare( "SELECT * FROM {$wpdb->prefix}li_payout_lines WHERE payout_id = %d", $payout_id ), ARRAY_A );
+    foreach ( $lines as $line ) {
+        $order_ref = sanitize_text_field( $line['order_ref'] ?? '' );
+        $amount = intval( $line['amount_cents'] ?? 0 );
+        if ( ! $order_ref || $amount <= 0 ) {
+            continue;
+        }
         li_record_ledger( 'payout', array(
             'order_ref'    => $order_ref,
-            'product_id'   => sanitize_text_field( $o['product_id'] ?? '' ),
+            'product_id'   => '',
             'rescue_id'    => $rescue_id,
-            'amount_cents' => -1 * intval( $o['rescue_split_cents'] ?? 0 ),
-            'net_cents'    => -1 * intval( $o['rescue_split_cents'] ?? 0 ),
+            'amount_cents' => -1 * $amount,
+            'net_cents'    => -1 * $amount,
             'meta'         => array( 'payout_id' => $payout_id, 'transfer_id' => $transfer_id ),
             'source'       => 'stripe',
         ) );
     }
 
-    return array( 'success' => true, 'message' => 'Transfer initiated for $' . number_format( $total_cents / 100, 2 ) . ' to ' . ( $rescue['name'] ?? 'rescue' ) . ( $transfer_id ? ' (' . $transfer_id . ')' : '' ) . '. Orders will be marked paid when the transfer.paid webhook arrives.', 'payout_id' => $payout_id );
+    li_audit_log( 'payout_transfer_initiated', array( 'payout_id' => $payout_id, 'rescue_id' => $rescue_id, 'transfer_id' => $transfer_id, 'amount_cents' => $total_cents ), 'payout', $payout_id );
+    return array( 'success' => true, 'message' => 'Transfer initiated for ' . li_format_money( $total_cents ) . ' to ' . ( $rescue['name'] ?? 'rescue' ) . ( $transfer_id ? ' (' . $transfer_id . ')' : '' ) . '. The batch is approved and will complete when Stripe confirms the transfer.', 'payout_id' => $payout_id );
 }
 
 
@@ -463,6 +525,11 @@ function li_ensure_split_config( $product_id, $price_cents = 0, $cost_cents = 0 
     }
     if ( is_wp_error( $r ) || wp_remote_retrieve_response_code( $r ) >= 400 ) {
         li_log( 'Failed to update split_config for product ' . $product_id . ': ' . wp_remote_retrieve_response_code( $r ) . ' ' . wp_remote_retrieve_body( $r ) );
+        return li_get_split_config( $product_id );
+    }
+    $latest = li_get_split_version( $product_id );
+    if ( ! $latest || abs( floatval( $latest['rescue_percent'] ) - round( $rp, 4 ) ) > 0.0001 || abs( floatval( $latest['larry_percent'] ) - round( $lp, 4 ) ) > 0.0001 || abs( floatval( $latest['cost_percent'] ) - round( $cost_percent, 4 ) ) > 0.0001 ) {
+        li_create_split_version( $product_id, round( $rp, 4 ), round( $lp, 4 ), round( $cost_percent, 4 ) );
     }
     return li_get_split_config( $product_id );
 }
@@ -567,6 +634,7 @@ function li_record_order( $args ) {
     }
 
     $split = li_calculate_splits( $product, $sale_cents, $rescue );
+    $split_version = li_get_split_version( $product_id );
 
     $payload = array(
         'shopify_order_id'    => $line_order_id,
@@ -603,6 +671,8 @@ function li_record_order( $args ) {
             'larry_cents'     => $split['larry_cents'],
             'rescue_percent'  => $split['rescue_percent'],
             'larry_percent'   => $split['larry_percent'],
+            'split_version'   => $split_version ? $split_version['version'] : 1,
+            'split_version_id'=> $split_version ? $split_version['id'] : 0,
         ),
         'source'       => 'woocommerce',
     ) );
@@ -630,7 +700,7 @@ function li_run_auto_payouts() {
     }
     foreach ( $rescues as $rescue ) {
         $rescue = li_rescue_merge_w9( li_rescue_merge_points( $rescue ) );
-        $result = li_process_rescue_payout( $rescue );
+        $result = li_prepare_rescue_payout( $rescue );
         $results[] = $result;
     }
     return $results;
