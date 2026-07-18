@@ -16,6 +16,7 @@ function li_page_settings() {
         update_option( 'li_stripe_sk',      sanitize_text_field( $_POST['li_stripe_sk'] ?? '' ) );
         update_option( 'li_stripe_pk',      sanitize_text_field( $_POST['li_stripe_pk'] ?? '' ) );
         update_option( 'li_stripe_account_id', sanitize_text_field( $_POST['li_stripe_account_id'] ?? '' ) );
+        update_option( 'li_stripe_webhook_secret', sanitize_text_field( $_POST['li_stripe_webhook_secret'] ?? '' ) );
         update_option( 'li_shopify_webhook_secret', sanitize_text_field( $_POST['li_shopify_webhook_secret'] ?? '' ) );
         update_option( 'li_shopify_store',  sanitize_text_field( $_POST['li_shopify_store'] ?? '' ) );
         $msg = '<div class="li-msg-ok">Settings saved.</div>';
@@ -47,7 +48,10 @@ function li_page_settings() {
     echo '<div class="li-hint">Leave blank to use the WooCommerce Stripe settings.</div></div></div>';
     echo '<div class="li-row"><div class="li-field"><label class="li-label">Platform Stripe account ID</label>';
     echo '<input class="li-input" type="text" name="li_stripe_account_id" value="' . esc_attr( get_option( 'li_stripe_account_id', 'acct_1TbPeB4GUlbY9xGE' ) ) . '" />';
-    echo '<div class="li-hint">acct_... for the connected platform (Larry Bev, Inc).</div></div></div></div>';
+    echo '<div class="li-hint">acct_... for the connected platform (Larry Bev, Inc).</div></div></div>';
+    echo '<div class="li-row"><div class="li-field"><label class="li-label">Stripe webhook secret</label>';
+    echo '<input class="li-input" type="password" name="li_stripe_webhook_secret" value="' . esc_attr( get_option( 'li_stripe_webhook_secret', '' ) ) . '" />';
+    echo '<div class="li-hint">Endpoint signing secret from Stripe. Add this URL in Stripe: ' . esc_url( home_url( '/wp-json/larry-impact/v1/stripe-webhook' ) ) . '</div></div></div></div>';
     echo '<div class="li-card"><div class="li-card-title">Shopify</div>';
     echo '<div class="li-row"><div class="li-field"><label class="li-label">Webhook secret</label>';
     echo '<input class="li-input" type="password" name="li_shopify_webhook_secret" value="' . esc_attr( get_option( 'li_shopify_webhook_secret', '' ) ) . '" />';

@@ -215,6 +215,13 @@ function li_stripe_pk() {
     return '';
 }
 
+function li_stripe_webhook_secret() {
+    $key = get_option( 'li_stripe_webhook_secret', '' );
+    if ( $key ) return $key;
+    if ( defined( 'LI_STRIPE_WEBHOOK_SECRET' ) && LI_STRIPE_WEBHOOK_SECRET ) return LI_STRIPE_WEBHOOK_SECRET;
+    return '';
+}
+
 function li_create_rescue_wp_user( $name, $email, $send_email = true ) {
     $email = sanitize_email( $email );
     $user  = get_user_by( 'email', $email );
@@ -329,11 +336,10 @@ function li_process_rescue_payout( $rescue ) {
     }
 
     $order_refs = array_map( function( $o ) { return sanitize_text_field( $o['shopify_order_id'] ?? '' ); }, $pending );
-    $payout_id = li_create_payout( $rescue_id, $order_refs, $total_cents, $transfer_id, 'completed' );
+    $payout_id = li_create_payout( $rescue_id, $order_refs, $total_cents, $transfer_id, 'pending' );
 
     foreach ( $pending as $o ) {
         $order_ref = sanitize_text_field( $o['shopify_order_id'] ?? '' );
-        li_db_patch( 'orders?id=eq.' . urlencode( $o['id'] ), array( 'status' => 'paid' ) );
         $wpdb->update(
             $wpdb->prefix . 'li_payout_lines',
             array( 'amount_cents' => intval( $o['rescue_split_cents'] ?? 0 ) ),
@@ -352,7 +358,7 @@ function li_process_rescue_payout( $rescue ) {
         ) );
     }
 
-    return array( 'success' => true, 'message' => 'Transferred $' . number_format( $total_cents / 100, 2 ) . ' to ' . ( $rescue['name'] ?? 'rescue' ) . ( $transfer_id ? ' (' . $transfer_id . ')' : '' ), 'payout_id' => $payout_id );
+    return array( 'success' => true, 'message' => 'Transfer initiated for $' . number_format( $total_cents / 100, 2 ) . ' to ' . ( $rescue['name'] ?? 'rescue' ) . ( $transfer_id ? ' (' . $transfer_id . ')' : '' ) . '. Orders will be marked paid when the transfer.paid webhook arrives.', 'payout_id' => $payout_id );
 }
 
 

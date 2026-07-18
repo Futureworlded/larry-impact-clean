@@ -29,6 +29,7 @@ $files = array(
     'woo-sync.php',
     'media-upload.php',
     'rescue-modal.php',
+    'stripe-webhook.php',
 );
 
 foreach ( $files as $file ) {
