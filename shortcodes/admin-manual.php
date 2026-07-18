@@ -1,7 +1,7 @@
 <?php
 if ( ! defined( 'ABSPATH' ) ) exit;
 
-add_action( 'admin_menu', 'li_register_manual_page', 20 );
+add_action( 'admin_menu', 'li_register_manual_page', 100 );
 function li_register_manual_page() {
     remove_submenu_page( 'li-rescues', 'li-manual' );
     add_submenu_page(
