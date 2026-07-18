@@ -54,7 +54,12 @@ function li_page_manual() {
 function li_get_manual_html() {
     $saved = get_option( 'li_manual_html', '' );
     if ( $saved !== '' ) {
-        return li_sanitize_manual_html( $saved );
+        $html = li_sanitize_manual_html( $saved );
+        // If the user pasted plain text, turn double line breaks into paragraphs.
+        if ( ! preg_match( '/<(?:p|div|h[1-6]|ul|ol|li|table|section|article|aside|header|footer|main|nav|blockquote|pre|code|figure|style|script|iframe|dl|dt|dd)\b/i', $html ) ) {
+            $html = wpautop( $html );
+        }
+        return $html;
     }
 
     $manual_path = plugin_dir_path( __FILE__ ) . '../LARRY_IMPACT_OPERATIONS_MANUAL.md';
@@ -71,12 +76,63 @@ function li_get_manual_html() {
 }
 
 function li_sanitize_manual_html( $html ) {
-    $allowed = wp_kses_allowed_html( 'post' );
-    foreach ( $allowed as $tag => $attrs ) {
-        $allowed[ $tag ]['style'] = true;
-        $allowed[ $tag ]['class'] = true;
-        $allowed[ $tag ]['id']    = true;
+    // Build a broad allowed-tags list so pasted manual HTML keeps its formatting.
+    $common_attrs = array(
+        'style'  => true,
+        'class'  => true,
+        'id'     => true,
+        'title'  => true,
+        'dir'    => true,
+        'lang'   => true,
+        'role'   => true,
+        'data-*' => true,
+        'aria-*' => true,
+    );
+
+    $allowed = array();
+    foreach ( array(
+        'a', 'abbr', 'address', 'area', 'article', 'aside', 'audio', 'b', 'bdo', 'bdi', 'big',
+        'blockquote', 'br', 'button', 'caption', 'cite', 'code', 'col', 'colgroup', 'dd', 'del',
+        'details', 'dfn', 'dialog', 'div', 'dl', 'dt', 'em', 'figcaption', 'figure', 'font',
+        'footer', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'header', 'hgroup', 'hr', 'i', 'img', 'ins',
+        'kbd', 'label', 'legend', 'li', 'main', 'map', 'mark', 'menu', 'nav', 'ol', 'p', 'pre', 'q',
+        'rp', 'rt', 'ruby', 's', 'samp', 'section', 'small', 'span', 'strike', 'strong', 'sub',
+        'summary', 'sup', 'table', 'tbody', 'td', 'tfoot', 'th', 'thead', 'tr', 'track', 'tt', 'u',
+        'ul', 'var', 'video', 'wbr',
+    ) as $tag ) {
+        $allowed[ $tag ] = $common_attrs;
     }
+
+    // Link/media specific attributes.
+    $allowed['a']   = array_merge( $common_attrs, array('href'=>true,'target'=>true,'rel'=>true,'name'=>true,'download'=>true) );
+    $allowed['img'] = array_merge( $common_attrs, array('src'=>true,'srcset'=>true,'sizes'=>true,'alt'=>true,'width'=>true,'height'=>true,'loading'=>true,'decoding'=>true,'align'=>true,'border'=>true) );
+    $allowed['area']= array_merge( $common_attrs, array('shape'=>true,'coords'=>true,'href'=>true,'alt'=>true,'target'=>true,'rel'=>true) );
+    $allowed['audio'] = array_merge( $common_attrs, array('src'=>true,'preload'=>true,'autoplay'=>true,'loop'=>true,'muted'=>true,'controls'=>true) );
+    $allowed['video'] = array_merge( $common_attrs, array('src'=>true,'preload'=>true,'autoplay'=>true,'loop'=>true,'muted'=>true,'controls'=>true,'width'=>true,'height'=>true,'poster'=>true) );
+    $allowed['source'] = array_merge( $common_attrs, array('src'=>true,'srcset'=>true,'sizes'=>true,'type'=>true,'media'=>true) );
+    $allowed['track'] = array_merge( $common_attrs, array('src'=>true,'srclang'=>true,'kind'=>true,'label'=>true,'default'=>true) );
+    $allowed['embed'] = array_merge( $common_attrs, array('src'=>true,'type'=>true,'width'=>true,'height'=>true) );
+    $allowed['iframe'] = array_merge( $common_attrs, array('src'=>true,'width'=>true,'height'=>true,'frameborder'=>true,'allowfullscreen'=>true,'allow'=>true,'sandbox'=>true,'loading'=>true) );
+    $allowed['object'] = array_merge( $common_attrs, array('data'=>true,'type'=>true,'width'=>true,'height'=>true) );
+    $allowed['param'] = array('name'=>true,'value'=>true);
+
+    // Table attributes.
+    foreach ( array('table','thead','tbody','tfoot','tr','td','th','caption','col','colgroup') as $tag ) {
+        $allowed[ $tag ] = array_merge( $common_attrs, array('align'=>true,'valign'=>true,'width'=>true,'height'=>true,'border'=>true,'cellpadding'=>true,'cellspacing'=>true) );
+    }
+    $allowed['td'] = array_merge( $allowed['td'], array('colspan'=>true,'rowspan'=>true,'scope'=>true,'headers'=>true) );
+    $allowed['th'] = array_merge( $allowed['th'], array('colspan'=>true,'rowspan'=>true,'scope'=>true,'headers'=>true) );
+    $allowed['col'] = array_merge( $allowed['col'], array('span'=>true,'width'=>true) );
+    $allowed['colgroup'] = array_merge( $allowed['colgroup'], array('span'=>true,'width'=>true) );
+
+    // List attributes.
+    $allowed['ol'] = array_merge( $common_attrs, array('start'=>true,'type'=>true,'reversed'=>true) );
+    $allowed['ul'] = array_merge( $common_attrs, array('type'=>true) );
+    $allowed['li'] = array_merge( $common_attrs, array('value'=>true) );
+
+    // Allow inline <style> blocks for custom manual CSS.
+    $allowed['style'] = array('type'=>true,'media'=>true,'scoped'=>true);
+
     return wp_kses( $html, $allowed );
 }
 
