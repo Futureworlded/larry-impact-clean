@@ -8,6 +8,7 @@ function li_register_menu() {
     add_submenu_page( 'li-rescues', 'Split Dashboard',  'Split Dashboard',  'manage_options', 'li-splits',     'li_page_splits' );
     add_submenu_page( 'li-rescues', 'Split Configurator','Split Configurator','manage_options','li-split-config','li_page_split_config' );
     add_submenu_page( 'li-rescues', 'Payouts',          'Payouts',          'manage_options', 'li-payouts',    'li_page_payouts' );
+    add_submenu_page( 'li-rescues', 'Reports',          'Reports',          'manage_options', 'li-reports',    'li_page_reports' );
     add_submenu_page( 'li-rescues', 'Settings',         'Settings',         'manage_options', 'li-settings',   'li_page_settings' );
 }
 add_action( 'admin_menu', 'li_register_menu' );

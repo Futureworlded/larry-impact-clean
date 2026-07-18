@@ -22,6 +22,7 @@ $files = array(
     'admin-rescues.php',
     'admin-applications.php',
     'admin-payouts.php',
+    'admin-reports.php',
     'admin-settings.php',
     'rescue-dashboard.php',
     'public-login.php',
