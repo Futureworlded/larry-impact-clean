@@ -5,8 +5,13 @@ function li_page_reports() {
     if ( ! current_user_can( 'manage_options' ) ) {
         wp_die( 'Unauthorized.' );
     }
+    if ( isset( $_GET['export'] ) && $_GET['export'] === 'ledger' && check_admin_referer( 'li_export_ledger' ) ) {
+        li_export_ledger_csv();
+        exit;
+    }
     $report = li_get_report_data();
     ob_start();
+    echo '<div style="margin-bottom:1rem;"><a class="li-btn li-btn-sm" href="' . esc_url( wp_nonce_url( admin_url( 'admin.php?page=li-reports&export=ledger' ), 'li_export_ledger' ) ) . '">Export ledger CSV</a></div>';
     echo '<div class="li-stat-grid">';
     echo '<div class="li-stat"><div class="li-stat-val">$' . esc_html( number_format( $report['total_revenue'] / 100, 2 ) ) . '</div><div class="li-stat-label">Total Revenue</div></div>';
     echo '<div class="li-stat"><div class="li-stat-val li-stat-val-amber">$' . esc_html( number_format( $report['total_payouts'] / 100, 2 ) ) . '</div><div class="li-stat-label">Rescue Payouts</div></div>';
@@ -179,4 +184,31 @@ function li_get_report_data() {
     $report['fraud_flags']  = $wpdb->get_results( "SELECT * FROM {$wpdb->prefix}li_fraud_flags ORDER BY created_at DESC LIMIT 10" );
 
     return $report;
+}
+
+function li_export_ledger_csv() {
+    if ( ! current_user_can( 'manage_options' ) ) {
+        wp_die( 'Unauthorized.' );
+    }
+    global $wpdb;
+    $rows = $wpdb->get_results( "SELECT * FROM {$wpdb->prefix}li_ledger ORDER BY created_at DESC" );
+    $filename = 'larry-impact-ledger-' . gmdate( 'Y-m-d' ) . '.csv';
+    header( 'Content-Type: text/csv; charset=utf-8' );
+    header( 'Content-Disposition: attachment; filename=' . $filename );
+    $out = fopen( 'php://output', 'w' );
+    fputcsv( $out, array( 'Date', 'Entry Type', 'Order Ref', 'Product ID', 'Rescue ID', 'Amount', 'Net', 'Source', 'Meta' ) );
+    foreach ( $rows as $r ) {
+        fputcsv( $out, array(
+            $r->created_at,
+            $r->entry_type,
+            $r->order_ref,
+            $r->product_id,
+            $r->rescue_id,
+            number_format( $r->amount_cents / 100, 2 ),
+            number_format( $r->net_cents / 100, 2 ),
+            $r->source,
+            $r->meta,
+        ) );
+    }
+    fclose( $out );
 }
