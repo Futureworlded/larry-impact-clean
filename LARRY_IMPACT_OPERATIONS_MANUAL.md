@@ -89,7 +89,7 @@ After logging in, rescues land on `/dashboard/`. The dashboard has several tabs:
 - Rescues can see which orders have been recorded and whether they are pending, ready for payout, approved, or paid.
 
 #### Setup / My account
-- Used to connect a Stripe account so the rescue can receive direct deposits.
+- Used to connect a payment account so the rescue can receive direct deposits.
 - If the rescue has not completed this step, payouts cannot be sent.
 
 #### Settings
@@ -113,7 +113,7 @@ Each approved rescue gets its own public page on the website. These pages can be
 
 ## Admin areas
 
-All admin functions are under the **Larry Impact** menu in the WordPress admin panel.
+All admin functions are under the **Larry Impact** menu in the website admin panel.
 
 ### Rescues
 
@@ -140,7 +140,7 @@ This is where new rescue applications are reviewed.
 2.  The default view shows **Pending** applications.
 3.  Review the organization name, contact name, phone, email, and location.
 4.  To approve, click **Approve**. The system will:
-    - Create a WordPress user for the rescue.
+    - Create a user account for the rescue.
     - Assign the rescue partner role.
     - Send the rescue an email with login credentials.
     - Add the rescue to the **Rescues** list.
@@ -205,7 +205,7 @@ The payout workflow has four stages:
 **How to approve and pay a batch:**
 1.  In the **Payout batches** table, find the batch you want to pay.
 2.  Click **Approve & Pay**.
-3.  The system sends the money to the rescue's connected Stripe account.
+3.  The system sends the money to the rescue's connected payment account.
 4.  The batch status changes to "Approved."
 
 **How to mark a batch completed manually:**
@@ -260,8 +260,8 @@ This is where platform-wide defaults are managed.
 - **Default rescue share** - The default percentage of net profit that goes to a rescue for new products.
 - **Minimum payout threshold** - The smallest amount a rescue must earn before a payout batch is created.
 - **Currency code and symbol** - The currency used for reports and payouts, for example `USD` and `$`.
-- **Stripe credentials** - The connection to the payment company. These should only be changed by the person managing the payment account.
-- **Shopify store domain** - The online store address used for admin links.
+- **Payment credentials** - The connection to the payment company. These should only be changed by the person managing the payment account.
+- **Online store address** - The store address used for admin links.
 - **Email settings** - The name and email address that application and payout emails come from.
 
 **When to use it:**
@@ -325,5 +325,5 @@ This page lets you generate or refresh the public profile pages for each approve
 - **Do not approve or modify real rescue data unless you intend to.** Use fake information like `someone@example.com` when testing the application flow.
 - **Always verify a rescue's payout details before approving a batch.** If a rescue has not connected a payment account, the transfer will fail.
 - **Payouts are not automatic until the payment company connection is fully configured.** A manual approval step is required for each batch.
-- **Keep the ledger export for accounting.** The CSV export in Reports is the official record of sales, payouts, refunds, and adjustments.
-- **Contact the platform manager or developer if you need to change payment keys, currencies, or the minimum payout threshold.** These affect real money and should be handled carefully.
+- **Keep the ledger export for accounting.** The spreadsheet export in Reports is the official record of sales, payouts, refunds, and adjustments.
+- **Contact the platform manager or developer if you need to change payment account settings, currencies, or the minimum payout threshold.** These affect real money and should be handled carefully.
