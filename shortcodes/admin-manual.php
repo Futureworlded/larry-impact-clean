@@ -34,19 +34,23 @@ function li_page_manual() {
     ?>
     <div class="wrap">
         <h1>Operations Manual</h1>
-        <p>Paste your own HTML below and click <strong>Save HTML</strong>. Leave it blank and click Save to use the Markdown file instead.</p>
-        <form method="post">
-            <?php wp_nonce_field( 'li_save_manual_html' ); ?>
-            <textarea name="li_manual_html" rows="20" style="width:100%;max-width:1000px;font-family:monospace;"><?php echo esc_textarea( $saved_html ); ?></textarea>
-            <p>
-                <?php submit_button( 'Save HTML', 'primary', 'li_save_manual_html', false ); ?>
-                <a href="<?php echo esc_url( $reset_url ); ?>" class="button" style="margin-left:10px;">Reset to Markdown</a>
-            </p>
-        </form>
-        <hr>
-        <div style="max-width:1000px;background:#fff;border:1px solid #ddd;padding:24px;border-radius:6px;">
+
+        <div style="max-width:1000px;background:#fff;border:1px solid #ddd;padding:24px;border-radius:6px;margin-bottom:20px;">
             <?php echo li_get_manual_html(); ?>
         </div>
+
+        <details style="max-width:1000px;background:#f9f9f9;border:1px solid #ddd;border-radius:6px;padding:12px 16px;">
+            <summary style="cursor:pointer;font-weight:600;font-size:14px;">Edit HTML</summary>
+            <form method="post" style="margin-top:12px;">
+                <p>Paste your own HTML below and click <strong>Save HTML</strong>. Leave it blank and click Save to use the Markdown file instead.</p>
+                <?php wp_nonce_field( 'li_save_manual_html' ); ?>
+                <textarea name="li_manual_html" rows="20" style="width:100%;font-family:monospace;"><?php echo esc_textarea( $saved_html ); ?></textarea>
+                <p>
+                    <?php submit_button( 'Save HTML', 'primary', 'li_save_manual_html', false ); ?>
+                    <a href="<?php echo esc_url( $reset_url ); ?>" class="button" style="margin-left:10px;">Reset to Markdown</a>
+                </p>
+            </form>
+        </details>
     </div>
     <?php
 }
