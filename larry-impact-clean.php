@@ -38,6 +38,7 @@ $files = array(
     'accounting.php',
     'helpers.php',
     'admin-menu.php',
+    'admin-manual.php',
     'admin-splits.php',
     'admin-split-config.php',
     'admin-rescues.php',
