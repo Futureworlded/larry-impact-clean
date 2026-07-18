@@ -32,14 +32,14 @@ function li_page_manual() {
 
     $reset_url = wp_nonce_url( admin_url( 'admin.php?page=li-manual&li_reset_manual=1' ), 'li_reset_manual' );
     ?>
-    <div class="wrap">
+    <div class="wrap" style="max-width:none;">
         <h1>Operations Manual</h1>
 
-        <div style="max-width:1000px;background:#fff;border:1px solid #ddd;padding:24px;border-radius:6px;margin-bottom:20px;">
+        <div style="width:100%;box-sizing:border-box;background:#fff;border:1px solid #ddd;padding:24px;border-radius:6px;margin-bottom:20px;word-wrap:break-word;overflow-wrap:break-word;">
             <?php echo li_get_manual_html(); ?>
         </div>
 
-        <details style="max-width:1000px;background:#f9f9f9;border:1px solid #ddd;border-radius:6px;padding:12px 16px;">
+        <details style="width:100%;box-sizing:border-box;background:#f9f9f9;border:1px solid #ddd;border-radius:6px;padding:12px 16px;">
             <summary style="cursor:pointer;font-weight:600;font-size:14px;">Edit HTML</summary>
             <form method="post" style="margin-top:12px;">
                 <p>Paste your own HTML below and click <strong>Save HTML</strong>. Leave it blank and click Save to use the Markdown file instead.</p>
