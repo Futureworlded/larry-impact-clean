@@ -1,4 +1,18 @@
 <?php
+if ( ! defined( 'ABSPATH' ) ) exit;
+
+add_action( 'wp_ajax_li_get_orders', 'li_ajax_get_orders' );
+function li_ajax_get_orders() {
+    if ( ! current_user_can( 'manage_options' ) ) {
+        wp_send_json_error( array( 'message' => 'Unauthorized.' ) );
+    }
+    check_ajax_referer( 'li_get_orders', 'nonce' );
+    $orders = li_db_get( 'orders?select=*,products(name),rescues(name)&order=ordered_at.desc' );
+    if ( ! is_array( $orders ) ) {
+        wp_send_json_error( array( 'message' => 'Could not load orders.' ) );
+    }
+    wp_send_json_success( $orders );
+}
 
 add_action( 'wp_ajax_li_process_payouts', 'li_handle_process_payouts' );
 function li_handle_process_payouts() {
@@ -12,8 +26,6 @@ function li_handle_process_payouts() {
     wp_send_json_success( array( 'messages' => $messages, 'success_count' => count( $successes ), 'total' => count( $results ) ) );
 }
 
-if ( ! defined( 'ABSPATH' ) ) exit;
-
 add_action( 'wp_ajax_li_mark_paid', 'li_handle_mark_paid' );
 function li_handle_mark_paid() {
     if ( ! current_user_can( 'manage_options' ) ) {
@@ -24,19 +36,38 @@ function li_handle_mark_paid() {
     if ( ! $id ) {
         wp_send_json_error( array( 'message' => 'Missing order.' ) );
     }
+    $order = li_db_get( 'orders?id=eq.' . urlencode( $id ) . '&select=*' );
+    $order = ! empty( $order ) ? $order[0] : null;
     $r = li_db_patch( 'orders?id=eq.' . urlencode( $id ), array( 'status' => 'paid' ) );
     if ( is_wp_error( $r ) || wp_remote_retrieve_response_code( $r ) >= 400 ) {
         wp_send_json_error( array( 'message' => 'Could not update order status.' ) );
+    }
+    if ( $order ) {
+        $order_ref = sanitize_text_field( $order['shopify_order_id'] ?? '' );
+        $product_id = sanitize_text_field( $order['product_id'] ?? '' );
+        $rescue_id = sanitize_text_field( $order['rescue_id'] ?? '' );
+        $amount = intval( $order['rescue_split_cents'] ?? 0 );
+        $payout_id = li_create_payout( $rescue_id, array( $order_ref ), $amount, '', 'completed' );
+        li_record_ledger( 'payout', array(
+            'order_ref'    => $order_ref,
+            'product_id'   => $product_id,
+            'rescue_id'    => $rescue_id,
+            'amount_cents' => -1 * $amount,
+            'net_cents'    => -1 * $amount,
+            'meta'         => array( 'payout_id' => $payout_id, 'manual' => true ),
+            'source'       => 'manual',
+        ) );
+        li_audit_log( 'order_marked_paid', array( 'order_id' => $id, 'payout_id' => $payout_id ), 'order', $order_ref );
     }
     wp_send_json_success();
 }
 
 function li_page_payouts() {
     ob_start();
-    $url = esc_js( LI_DB_URL );
-    $key = esc_js( LI_DB_KEY );
     $ajax = esc_js( admin_url( 'admin-ajax.php' ) );
+    $get_nonce = esc_js( wp_create_nonce( 'li_get_orders' ) );
     $mp_nonce = esc_js( wp_create_nonce( 'li_mark_paid' ) );
+    $pp_nonce = esc_js( wp_create_nonce( 'li_process_payouts' ) );
     echo '<div class="li-stat-grid">';
     echo '<div class="li-stat"><div class="li-stat-val li-stat-val-green" id="li-py-earned">--</div><div class="li-stat-label">Total earned by rescues</div></div>';
     echo '<div class="li-stat"><div class="li-stat-val li-stat-val-amber" id="li-py-paid">--</div><div class="li-stat-label">Total paid out</div></div>';
@@ -57,22 +88,23 @@ function li_page_payouts() {
     echo '<th>Date</th><th>Order</th><th>Product</th><th>Rescue</th><th>Earned</th><th>Status</th><th>Action</th>';
     echo '</tr></thead><tbody id="li-py-tbody"><tr><td colspan="7" class="li-loading">Loading orders...</td></tr></tbody></table></div>';
     echo '<script>';
-    echo li_js_vars();
-    echo 'var LI_AJAX="' . $ajax . '";var LI_MP_NONCE="' . $mp_nonce . '";var LI_PAYOUT_NONCE="' . esc_js( wp_create_nonce( 'li_process_payouts' ) ) . '";';
+    echo 'var LI_AJAX="' . $ajax . '";var LI_GET_ORDERS_NONCE="' . $get_nonce . '";var LI_MP_NONCE="' . $mp_nonce . '";var LI_PAYOUT_NONCE="' . $pp_nonce . '";';
     echo '
     var liPyAll=[];var liPyFiltered=[];
     function liPyLoad(){
-        fetch(LI_URL+"/rest/v1/orders?select=*,products(name),rescues(name)&order=ordered_at.desc",{headers:{"apikey":LI_KEY,"Authorization":"Bearer "+LI_KEY}})
+        var fd=new FormData();fd.append("action","li_get_orders");fd.append("nonce",LI_GET_ORDERS_NONCE);
+        fetch(LI_AJAX,{method:"POST",body:fd})
         .then(function(r){return r.json();})
-        .then(function(data){
-            liPyAll=data;
-            var t=data.reduce(function(s,o){return s+o.rescue_split_cents;},0);
-            var p=data.filter(function(o){return o.status==="paid";}).reduce(function(s,o){return s+o.rescue_split_cents;},0);
+        .then(function(res){
+            if(!res.success||!Array.isArray(res.data))throw new Error(res.data&&res.data.message?res.data.message:"Invalid response");
+            liPyAll=res.data;
+            var t=liPyAll.reduce(function(s,o){return s+(o.rescue_split_cents||0);},0);
+            var p=liPyAll.filter(function(o){return o.status==="paid";}).reduce(function(s,o){return s+(o.rescue_split_cents||0);},0);
             document.getElementById("li-py-earned").textContent="$"+(t/100).toFixed(2);
             document.getElementById("li-py-paid").textContent="$"+(p/100).toFixed(2);
             document.getElementById("li-py-pending").textContent="$"+((t-p)/100).toFixed(2);
-            document.getElementById("li-py-orders").textContent=data.length;
-            lipyFilter();
+            document.getElementById("li-py-orders").textContent=liPyAll.length;
+            liPyFilter();
         })
         .catch(function(){document.getElementById("li-py-tbody").innerHTML="<tr><td colspan=7 class=li-empty>Unable to load orders.</td></tr>";});
     }
@@ -125,5 +157,3 @@ function li_page_payouts() {
     </script>';
     li_admin_wrap( 'Payouts', ob_get_clean() );
 }
-
-

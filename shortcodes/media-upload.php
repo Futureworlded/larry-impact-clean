@@ -1,6 +1,48 @@
 <?php
 if ( ! defined( 'ABSPATH' ) ) exit;
 
+function li_validate_upload_file( $file, $allowed_ext ) {
+    if ( ! is_array( $file ) || ! empty( $file['error'] ) ) {
+        return ! empty( $file['error'] ) ? $file['error'] : 'No file received.';
+    }
+
+    $max_size = wp_max_upload_size();
+    if ( $max_size > 0 && $file['size'] > $max_size ) {
+        return 'File is too large. Maximum size: ' . size_format( $max_size ) . '.';
+    }
+
+    $allowed_ext = array_map( 'strtolower', $allowed_ext );
+    $filetype = wp_check_filetype_and_ext( $file['tmp_name'], $file['name'], $allowed_ext );
+    if ( empty( $filetype['ext'] ) || empty( $filetype['type'] ) ) {
+        return 'Invalid or unsafe file type.';
+    }
+    if ( ! in_array( strtolower( $filetype['ext'] ), $allowed_ext, true ) ) {
+        return 'File extension not allowed.';
+    }
+
+    $real_mime = wp_get_image_mime( $file['tmp_name'] );
+    if ( strpos( $filetype['type'], 'image/' ) === 0 ) {
+        if ( empty( $real_mime ) || strpos( $real_mime, 'image/' ) !== 0 ) {
+            return 'Uploaded file is not a valid image.';
+        }
+        $info = getimagesize( $file['tmp_name'] );
+        if ( false === $info ) {
+            return 'Could not read image dimensions.';
+        }
+        $width  = $info[0];
+        $height = $info[1];
+        if ( $width < 10 || $height < 10 || $width > 10000 || $height > 10000 ) {
+            return 'Image dimensions are outside the allowed range (10x10 to 10000x10000 pixels).';
+        }
+    }
+
+    if ( $filetype['type'] === 'application/pdf' && strtolower( $filetype['ext'] ) !== 'pdf' ) {
+        return 'Only PDF files are allowed for document uploads.';
+    }
+
+    return true;
+}
+
 function li_handle_media_upload() {
     if ( ! is_user_logged_in() ) {
         wp_send_json_error( array( 'message' => 'You must be signed in to upload.' ) );
@@ -12,17 +54,10 @@ function li_handle_media_upload() {
         wp_send_json_error( array( 'message' => 'No file received.' ) );
     }
     $file = $_FILES['li_file'];
-    if ( ! empty( $file['error'] ) ) {
-        wp_send_json_error( array( 'message' => $file['error'] ) );
-    }
-    $type = $file['type'] ?? '';
-    if ( strpos( $type, 'image/' ) !== 0 ) {
-        wp_send_json_error( array( 'message' => 'Only image files are allowed.' ) );
-    }
-    $ext = strtolower( pathinfo( sanitize_file_name( $file['name'] ), PATHINFO_EXTENSION ) );
-    $allowed_ext = array( 'jpg', 'jpeg', 'png', 'gif', 'webp' );
-    if ( ! in_array( $ext, $allowed_ext, true ) ) {
-        wp_send_json_error( array( 'message' => 'Invalid image file type.' ) );
+    $allowed = array( 'jpg', 'jpeg', 'png', 'gif', 'webp' );
+    $validation = li_validate_upload_file( $file, $allowed );
+    if ( true !== $validation ) {
+        wp_send_json_error( array( 'message' => $validation ) );
     }
     $bits = file_get_contents( $file['tmp_name'] );
     if ( false === $bits ) {
@@ -77,9 +112,6 @@ function li_handle_w9_upload() {
     if ( ! isset( $_POST['li_nonce'] ) || ! wp_verify_nonce( $_POST['li_nonce'], 'li_media_upload' ) ) {
         wp_send_json_error( array( 'message' => 'Security check failed.' ) );
     }
-    if ( empty( $_FILES['li_file'] ) ) {
-        wp_send_json_error( array( 'message' => 'No file received.' ) );
-    }
     $rid = sanitize_text_field( $_POST['rescue_id'] ?? '' );
     if ( ! current_user_can( 'manage_options' ) ) {
         $user   = wp_get_current_user();
@@ -88,17 +120,14 @@ function li_handle_w9_upload() {
             wp_send_json_error( array( 'message' => 'Unauthorized.' ) );
         }
     }
+    if ( empty( $_FILES['li_file'] ) ) {
+        wp_send_json_error( array( 'message' => 'No file received.' ) );
+    }
     $file = $_FILES['li_file'];
-    if ( ! empty( $file['error'] ) ) {
-        wp_send_json_error( array( 'message' => $file['error'] ) );
-    }
-    $type = $file['type'] ?? '';
-    $ext  = strtolower( pathinfo( sanitize_file_name( $file['name'] ), PATHINFO_EXTENSION ) );
-    if ( strpos( $type, 'image/' ) !== 0 && $type !== 'application/pdf' && $ext !== 'pdf' ) {
-        wp_send_json_error( array( 'message' => 'Only images or PDF files are allowed.' ) );
-    }
-    if ( $ext !== 'pdf' && ! in_array( $ext, array( 'jpg', 'jpeg', 'png', 'gif', 'webp' ), true ) ) {
-        wp_send_json_error( array( 'message' => 'Invalid file type.' ) );
+    $allowed = array( 'pdf', 'jpg', 'jpeg', 'png', 'gif', 'webp' );
+    $validation = li_validate_upload_file( $file, $allowed );
+    if ( true !== $validation ) {
+        wp_send_json_error( array( 'message' => $validation ) );
     }
     $bits = file_get_contents( $file['tmp_name'] );
     if ( false === $bits ) {

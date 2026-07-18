@@ -116,7 +116,7 @@ function li_page_applications() {
     echo '
     var liAppAll=[];var liAppCurrent="pending";
     function liAppLoad(){
-        fetch(LI_URL+"/rest/v1/rescues?select=*&order=created_at.desc",{headers:{"apikey":LI_KEY,"Authorization":"Bearer "+LI_KEY}})
+        fetch(LI_ADMIN_AJAX+"&path="+encodeURIComponent("rescues?select=*&order=created_at.desc")+"&nonce="+encodeURIComponent(LI_ADMIN_NONCE))
         .then(function(r){return r.json();})
         .then(function(data){
             liAppAll=data;

@@ -29,7 +29,7 @@ function li_page_splits() {
     var liAllOrders = [];
     function liLoadSplits() {
         document.getElementById("li-splits-tbody").innerHTML = "<tr><td colspan=8 class=li-loading>Loading orders...</td></tr>";
-        fetch(LI_URL+"/rest/v1/orders?select=*,products(name),rescues(name)&order=ordered_at.desc",{headers:{"apikey":LI_KEY,"Authorization":"Bearer "+LI_KEY}})
+        fetch(LI_ADMIN_AJAX+"&path="+encodeURIComponent("orders?select=*,products(name),rescues(name)&order=ordered_at.desc")+"&nonce="+encodeURIComponent(LI_ADMIN_NONCE))
         .then(function(r){if(!r.ok)throw new Error(r.status);return r.json();})
         .then(function(data){
             liAllOrders=data;

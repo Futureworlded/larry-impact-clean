@@ -10,10 +10,11 @@ function li_service_key() {
 }
 
 function li_db_get( $endpoint ) {
+    $key = li_service_key();
     $response = wp_remote_get( LI_DB_URL . '/rest/v1/' . $endpoint, array(
         'headers' => array(
-            'apikey'        => LI_DB_KEY,
-            'Authorization' => 'Bearer ' . LI_DB_KEY,
+            'apikey'        => $key,
+            'Authorization' => 'Bearer ' . $key,
         ),
     ) );
     if ( is_wp_error( $response ) ) return array();
@@ -140,7 +141,44 @@ function li_admin_wrap( $title, $content ) {
 
 // shared JS helpers
 function li_js_vars() {
-    return 'var LI_URL="' . esc_js( LI_DB_URL ) . '";var LI_KEY="' . esc_js( LI_DB_KEY ) . '";';
+    return 'var LI_ADMIN_AJAX="' . esc_js( admin_url( 'admin-ajax.php?action=li_admin_supabase_proxy' ) ) . '";var LI_ADMIN_NONCE="' . esc_js( wp_create_nonce( 'li_admin_supabase_proxy' ) ) . '";';
+}
+
+add_action( 'wp_ajax_li_admin_supabase_proxy', 'li_ajax_admin_supabase_proxy' );
+function li_ajax_admin_supabase_proxy() {
+    if ( ! current_user_can( 'manage_options' ) ) {
+        wp_send_json_error( array( 'message' => 'Unauthorized.' ) );
+    }
+    check_ajax_referer( 'li_admin_supabase_proxy', 'nonce' );
+    $path = isset( $_REQUEST['path'] ) ? sanitize_text_field( $_REQUEST['path'] ) : '';
+    if ( ! $path || preg_match( '/\b(rpc|schema)\b/i', $path ) ) {
+        wp_send_json_error( array( 'message' => 'Invalid proxy path.' ) );
+    }
+    $data = li_db_get( $path );
+    if ( ! is_array( $data ) ) {
+        wp_send_json_error( array( 'message' => 'Could not load data.' ) );
+    }
+    wp_send_json( $data );
+}
+
+add_action( 'wp_ajax_li_rescue_get_orders',        'li_ajax_rescue_get_orders' );
+add_action( 'wp_ajax_nopriv_li_rescue_get_orders', 'li_ajax_rescue_get_orders' );
+function li_ajax_rescue_get_orders() {
+    if ( ! is_user_logged_in() ) {
+        wp_send_json_error( array( 'message' => 'Unauthorized.' ) );
+    }
+    check_ajax_referer( 'li_rescue_get_orders', 'nonce' );
+    $rescue_id = sanitize_text_field( $_POST['rescue_id'] ?? '' );
+    $user = wp_get_current_user();
+    $rescue = li_get_rescue_by_email( $user->user_email );
+    if ( ! $rescue || $rescue['id'] !== $rescue_id ) {
+        wp_send_json_error( array( 'message' => 'Unauthorized.' ) );
+    }
+    $orders = li_db_get( 'orders?rescue_id=eq.' . urlencode( $rescue_id ) . '&select=*,products(name)&order=ordered_at.desc' );
+    if ( ! is_array( $orders ) ) {
+        wp_send_json_error( array( 'message' => 'Could not load orders.' ) );
+    }
+    wp_send_json( $orders );
 }
 
 function li_money( $cents ) {
@@ -278,18 +316,46 @@ function li_process_rescue_payout( $rescue ) {
     $response_code = wp_remote_retrieve_response_code( $r );
     $body          = json_decode( wp_remote_retrieve_body( $r ), true );
     if ( is_wp_error( $r ) || $response_code >= 400 ) {
+        li_audit_log( 'payout_stripe_failed', array( 'rescue_id' => $rescue_id, 'response' => $body ), 'payout', $rescue_id );
         return array( 'success' => false, 'message' => ( $body['error']['message'] ?? 'Stripe transfer failed.' ) );
     }
     $transfer_id = $body['id'] ?? '';
-    foreach ( $pending as $o ) {
-        li_db_patch( 'orders?id=eq.' . urlencode( $o['id'] ), array( 'status' => 'paid' ) );
+
+    global $wpdb;
+    $dup = $wpdb->get_var( $wpdb->prepare( "SELECT id FROM {$wpdb->prefix}li_payouts WHERE transfer_id = %s LIMIT 1", $transfer_id ) );
+    if ( $dup ) {
+        li_flag_fraud( 'duplicate_payout', array( 'rescue_id' => $rescue_id, 'transfer_id' => $transfer_id ) );
+        return array( 'success' => false, 'message' => 'This Stripe transfer has already been recorded.' );
     }
-    return array( 'success' => true, 'message' => 'Transferred $' . number_format( $total_cents / 100, 2 ) . ' to ' . ( $rescue['name'] ?? 'rescue' ) . ( $transfer_id ? ' (' . $transfer_id . ')' : '' ) );
+
+    $order_refs = array_map( function( $o ) { return sanitize_text_field( $o['shopify_order_id'] ?? '' ); }, $pending );
+    $payout_id = li_create_payout( $rescue_id, $order_refs, $total_cents, $transfer_id, 'completed' );
+
+    foreach ( $pending as $o ) {
+        $order_ref = sanitize_text_field( $o['shopify_order_id'] ?? '' );
+        li_db_patch( 'orders?id=eq.' . urlencode( $o['id'] ), array( 'status' => 'paid' ) );
+        $wpdb->update(
+            $wpdb->prefix . 'li_payout_lines',
+            array( 'amount_cents' => intval( $o['rescue_split_cents'] ?? 0 ) ),
+            array( 'payout_id' => $payout_id, 'order_ref' => $order_ref ),
+            array( '%d' ),
+            array( '%d', '%s' )
+        );
+        li_record_ledger( 'payout', array(
+            'order_ref'    => $order_ref,
+            'product_id'   => sanitize_text_field( $o['product_id'] ?? '' ),
+            'rescue_id'    => $rescue_id,
+            'amount_cents' => -1 * intval( $o['rescue_split_cents'] ?? 0 ),
+            'net_cents'    => -1 * intval( $o['rescue_split_cents'] ?? 0 ),
+            'meta'         => array( 'payout_id' => $payout_id, 'transfer_id' => $transfer_id ),
+            'source'       => 'stripe',
+        ) );
+    }
+
+    return array( 'success' => true, 'message' => 'Transferred $' . number_format( $total_cents / 100, 2 ) . ' to ' . ( $rescue['name'] ?? 'rescue' ) . ( $transfer_id ? ' (' . $transfer_id . ')' : '' ), 'payout_id' => $payout_id );
 }
 
-function li_log( $msg ) {
-    error_log( 'Larry Impact: ' . $msg );
-}
+
 
 function li_get_split_config( $product_id ) {
     $data = li_db_get( 'split_config?product_id=eq.' . urlencode( $product_id ) . '&select=*' );
@@ -419,8 +485,20 @@ function li_record_order( $args ) {
     // store a per-line composite to allow one row per product per order.
     $line_order_id = $order_id . '::' . $product_id;
 
+    if ( li_check_duplicate_order( $line_order_id, $product_id ) ) {
+        li_flag_fraud( 'duplicate_order', array( 'order_ref' => $line_order_id, 'product_id' => $product_id ) );
+        li_log( 'Duplicate order rejected: ' . $line_order_id );
+        return true;
+    }
+
+    if ( li_is_order_locked( $line_order_id ) ) {
+        li_log( 'Order is locked, skipping re-record: ' . $line_order_id );
+        return true;
+    }
+
     $existing = li_db_get( 'orders?shopify_order_id=eq.' . urlencode( $line_order_id ) . '&product_id=eq.' . urlencode( $product_id ) . '&select=id' );
     if ( ! empty( $existing ) ) {
+        li_lock_order( $line_order_id );
         return true;
     }
 
@@ -456,6 +534,24 @@ function li_record_order( $args ) {
         li_log( 'Failed to record order ' . $order_id . ' product ' . $product_id . ': ' . wp_remote_retrieve_response_code( $r ) . ' ' . wp_remote_retrieve_body( $r ) );
         return false;
     }
+
+    li_record_ledger( 'order', array(
+        'order_ref'    => $line_order_id,
+        'product_id'   => $product_id,
+        'rescue_id'    => $rescue_id,
+        'amount_cents' => $sale_cents,
+        'net_cents'    => $sale_cents,
+        'meta'         => array(
+            'quantity'        => $quantity,
+            'rescue_cents'    => $split['rescue_cents'],
+            'larry_cents'     => $split['larry_cents'],
+            'rescue_percent'  => $split['rescue_percent'],
+            'larry_percent'   => $split['larry_percent'],
+        ),
+        'source'       => 'woocommerce',
+    ) );
+    li_lock_order( $line_order_id );
+    li_audit_log( 'order_recorded', array( 'order_ref' => $line_order_id, 'amount_cents' => $sale_cents ), 'order', $line_order_id );
     return true;
 }
 

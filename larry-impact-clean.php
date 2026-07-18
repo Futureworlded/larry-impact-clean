@@ -3,7 +3,7 @@
  * Plugin Name: Larry Impact
  * Plugin URI:  https://larryimpact.com
  * Description: Powers all Larry Impact functionality.
- * Version:     3.1.5
+ * Version:     3.1.6
  * Author:      WebDesignMike.com
  */
 
@@ -14,6 +14,7 @@ if ( ! defined( 'ABSPATH' ) ) exit;
 
 // load files
 $files = array(
+    'accounting.php',
     'helpers.php',
     'admin-menu.php',
     'admin-splits.php',

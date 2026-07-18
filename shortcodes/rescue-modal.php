@@ -318,10 +318,9 @@ function li_rescue_modal_output() {
 
     <script>
     (function() {
-        var SUPABASE_URL = 'https://sjcdeetrkztmbtmjbcgd.supabase.co';
-        var SUPABASE_KEY = '<?php echo esc_js( LI_DB_KEY ); ?>';
         var AJAX_URL    = '<?php echo esc_js( $ajax ); ?>';
         var NONCE       = '<?php echo esc_js( $nonce ); ?>';
+        var PUBLIC_RESCUES_NONCE = '<?php echo esc_js( wp_create_nonce( 'li_public_rescues' ) ); ?>';
         var CARDS_TO_SHOW = 3;
 
         var selectedSlug = '';
@@ -479,12 +478,15 @@ function li_rescue_modal_output() {
             if (!isShopPage()) return;
             if (alreadyChosen()) return;
 
-            fetch(SUPABASE_URL + '/rest/v1/rescues?select=id,name,slug,city,state,mission,logo_url,hero_photo_url&status=eq.approved&order=name.asc', {
-                headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
-            })
+            var fd = new FormData();
+            fd.append('action', 'li_get_public_rescues');
+            fd.append('nonce', PUBLIC_RESCUES_NONCE);
+            fetch(AJAX_URL, { method: 'POST', body: fd })
             .then(function(r) { return r.json(); })
-            .then(function(rescues) {
-                if (!rescues || !rescues.length) return;
+            .then(function(res) {
+                if (!res.success) return;
+                var rescues = res.data || [];
+                if (!rescues.length) return;
                 allRescues = rescues;
 
                 // Pick 3 random for cards
@@ -549,6 +551,17 @@ add_action( 'woocommerce_admin_order_data_after_billing_address', function( $ord
 } );
 
 // Ajax handler
+
+add_action( 'wp_ajax_li_get_public_rescues',        'li_ajax_get_public_rescues' );
+add_action( 'wp_ajax_nopriv_li_get_public_rescues', 'li_ajax_get_public_rescues' );
+function li_ajax_get_public_rescues() {
+    check_ajax_referer( 'li_public_rescues', 'nonce' );
+    $rescues = li_db_get( 'rescues?select=id,name,slug,city,state,mission,logo_url,hero_photo_url&status=eq.approved&order=name.asc' );
+    if ( ! is_array( $rescues ) ) {
+        wp_send_json_error( array( 'message' => 'Could not load rescues.' ) );
+    }
+    wp_send_json_success( $rescues );
+}
 
 if ( ! function_exists( 'li_save_cart_rescue' ) ) {
     add_action( 'wp_ajax_li_save_cart_rescue',        'li_save_cart_rescue' );

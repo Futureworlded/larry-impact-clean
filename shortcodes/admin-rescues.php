@@ -72,7 +72,7 @@ function li_page_rescue_list() {
     echo li_js_vars();
     echo 'var LI_BASE="' . $base . '";';
     echo '
-    fetch(LI_URL+"/rest/v1/rescues?select=*&order=created_at.desc",{headers:{"apikey":LI_KEY,"Authorization":"Bearer "+LI_KEY}})
+    fetch(LI_ADMIN_AJAX+"&path="+encodeURIComponent("rescues?select=*&order=created_at.desc")+"&nonce="+encodeURIComponent(LI_ADMIN_NONCE))
     .then(function(r){if(!r.ok)throw new Error(r.status);return r.json();})
     .then(function(data){
         var tbody=document.getElementById("li-rescues-tbody");
@@ -280,7 +280,7 @@ function li_page_rescue_detail( $view_id ) {
         if(name==="preview")liLoadPreview();
     }
     function liLoadStats(){
-        fetch(LI_URL+"/rest/v1/orders?rescue_id=eq."+LI_RID+"&select=*",{headers:{"apikey":LI_KEY,"Authorization":"Bearer "+LI_KEY}})
+        fetch(LI_ADMIN_AJAX+"&path="+encodeURIComponent("orders?rescue_id=eq."+LI_RID+"&select=*")+"&nonce="+encodeURIComponent(LI_ADMIN_NONCE))
         .then(function(r){return r.json();})
         .then(function(orders){
             var t=orders.reduce(function(s,o){return s+o.rescue_split_cents;},0);
@@ -293,7 +293,7 @@ function li_page_rescue_detail( $view_id ) {
         });
     }
     function liLoadOrders(){
-        fetch(LI_URL+"/rest/v1/orders?rescue_id=eq."+LI_RID+"&select=*,products(name)&order=ordered_at.desc",{headers:{"apikey":LI_KEY,"Authorization":"Bearer "+LI_KEY}})
+        fetch(LI_ADMIN_AJAX+"&path="+encodeURIComponent("orders?rescue_id=eq."+LI_RID+"&select=*,products(name)&order=ordered_at.desc")+"&nonce="+encodeURIComponent(LI_ADMIN_NONCE))
         .then(function(r){return r.json();})
         .then(function(orders){
             var tbody=document.getElementById("li-rescue-orders");
@@ -307,7 +307,7 @@ function li_page_rescue_detail( $view_id ) {
         });
     }
     function liLoadPreview(){
-        fetch(LI_URL+"/rest/v1/orders?rescue_id=eq."+LI_RID+"&select=*,products(name)&order=ordered_at.desc",{headers:{"apikey":LI_KEY,"Authorization":"Bearer "+LI_KEY}})
+        fetch(LI_ADMIN_AJAX+"&path="+encodeURIComponent("orders?rescue_id=eq."+LI_RID+"&select=*,products(name)&order=ordered_at.desc")+"&nonce="+encodeURIComponent(LI_ADMIN_NONCE))
         .then(function(r){return r.json();})
         .then(function(orders){
             var t=orders.reduce(function(s,o){return s+o.rescue_split_cents;},0);

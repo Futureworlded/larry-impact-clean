@@ -129,8 +129,8 @@ function li_rescue_overview_shortcode() {
     li_rescue_auth();
     $user   = wp_get_current_user();
     $rescue = li_get_rescue_by_email( $user->user_email );
-    $url_js = esc_js( LI_DB_URL );
-    $key_js = esc_js( LI_DB_KEY );
+    $ajax_js = esc_js( admin_url( 'admin-ajax.php' ) );
+    $nonce   = esc_js( wp_create_nonce( 'li_rescue_get_orders' ) );
     ob_start();
     li_rescue_styles();
     echo '<div class="li-rd-wrap">';
@@ -147,9 +147,8 @@ function li_rescue_overview_shortcode() {
         echo '<div class="li-rd-table-wrap"><table class="li-rd-table"><thead><tr><th>Date</th><th>Product</th><th>Your cut</th><th>Status</th></tr></thead>';
         echo '<tbody id="li-rd-recent"><tr><td colspan="4" class="li-rd-empty">Loading...</td></tr></tbody></table></div></div>';
         echo '<script>';
-        echo 'var LI_URL="' . $url_js . '";var LI_KEY="' . $key_js . '";';
-        echo 'fetch(LI_URL+"/rest/v1/orders?rescue_id=eq.' . $rid . '&select=*,products(name)&order=ordered_at.desc",{headers:{"apikey":LI_KEY,"Authorization":"Bearer "+LI_KEY}})
-        .then(function(r){return r.json();}).then(function(orders){
+        echo 'var LI_RESCUE_ORDERS_AJAX="' . $ajax_js . '";var LI_RESCUE_ORDERS_NONCE="' . $nonce . '";var LI_RESCUE_ID="' . $rid . '";';
+        echo 'var fd=new FormData();fd.append("action","li_rescue_get_orders");fd.append("nonce",LI_RESCUE_ORDERS_NONCE);fd.append("rescue_id",LI_RESCUE_ID);fetch(LI_RESCUE_ORDERS_AJAX,{method:"POST",body:fd}).then(function(r){return r.json();}).then(function(res){var orders=Array.isArray(res)?res:[];
             var t=orders.reduce(function(s,o){return s+o.rescue_split_cents;},0);
             var p=orders.filter(function(o){return o.status==="paid";}).reduce(function(s,o){return s+o.rescue_split_cents;},0);
             document.getElementById("li-rd-stats").innerHTML=
@@ -254,7 +253,7 @@ function li_rescue_profile_shortcode() {
     echo '<button class="li-rd-btn" type="submit">Save profile</button>';
     echo '</form>';
     echo '<script>';
-    echo 'var LI_URL="' . $url_js . '";var LI_KEY="' . $key_js . '";var LI_NONCE="' . $nonce . '";var LI_AJAX="' . $ajax_js . '";';
+    echo 'var LI_NONCE="' . $nonce . '";var LI_AJAX="' . $ajax_js . '";';
     echo 'async function liRdUpload(input,field,rid){
         if(!input.files||!input.files[0])return;
         var sid=field==="logo_url"?"li-rd-logo-status":"li-rd-hero-status";
@@ -284,8 +283,8 @@ function li_rescue_splits_shortcode() {
     li_rescue_auth();
     $user   = wp_get_current_user();
     $rescue = li_get_rescue_by_email( $user->user_email );
-    $url_js = esc_js( LI_DB_URL );
-    $key_js = esc_js( LI_DB_KEY );
+    $ajax_js = esc_js( admin_url( 'admin-ajax.php' ) );
+    $nonce   = esc_js( wp_create_nonce( 'li_rescue_get_orders' ) );
     ob_start();
     li_rescue_styles();
     echo '<div class="li-rd-wrap">';
@@ -297,9 +296,8 @@ function li_rescue_splits_shortcode() {
         echo '<div class="li-rd-table-wrap"><table class="li-rd-table"><thead><tr><th>Date</th><th>Order</th><th>Product</th><th>Sale</th><th>Your cut</th><th>Status</th></tr></thead>';
         echo '<tbody id="li-rd-earn-tbody"><tr><td colspan="6" class="li-rd-empty">Loading orders...</td></tr></tbody></table></div>';
         echo '<script>';
-        echo 'var LI_URL="' . $url_js . '";var LI_KEY="' . $key_js . '";';
-        echo 'fetch(LI_URL+"/rest/v1/orders?rescue_id=eq.' . $rid . '&select=*,products(name)&order=ordered_at.desc",{headers:{"apikey":LI_KEY,"Authorization":"Bearer "+LI_KEY}})
-        .then(function(r){return r.json();}).then(function(orders){
+        echo 'var LI_RESCUE_ORDERS_AJAX="' . $ajax_js . '";var LI_RESCUE_ORDERS_NONCE="' . $nonce . '";var LI_RESCUE_ID="' . $rid . '";';
+        echo 'var fd=new FormData();fd.append("action","li_rescue_get_orders");fd.append("nonce",LI_RESCUE_ORDERS_NONCE);fd.append("rescue_id",LI_RESCUE_ID);fetch(LI_RESCUE_ORDERS_AJAX,{method:"POST",body:fd}).then(function(r){return r.json();}).then(function(res){var orders=Array.isArray(res)?res:[];
             var t=orders.reduce(function(s,o){return s+o.rescue_split_cents;},0);
             var p=orders.filter(function(o){return o.status==="paid";}).reduce(function(s,o){return s+o.rescue_split_cents;},0);
             document.getElementById("li-rd-earn-stats").innerHTML=

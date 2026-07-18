@@ -25,7 +25,7 @@ function li_page_split_config() {
     echo '
     var liScData=[];
     function liScLoad(){
-        fetch(LI_URL+"/rest/v1/products?select=*,split_config(id,rescue_percent,larry_percent)&order=name.asc",{headers:{"apikey":LI_KEY,"Authorization":"Bearer "+LI_KEY}})
+        fetch(LI_ADMIN_AJAX+"&path="+encodeURIComponent("products?select=*,split_config(id,rescue_percent,larry_percent)&order=name.asc")+"&nonce="+encodeURIComponent(LI_ADMIN_NONCE))
         .then(function(r){return r.json();})
         .then(function(data){
             liScData=data;
