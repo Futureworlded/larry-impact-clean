@@ -26,6 +26,7 @@ function li_page_split_config() {
         fetch(LI_ADMIN_AJAX+"&path="+encodeURIComponent("products?select=*,split_config(id,rescue_percent,larry_percent)&order=name.asc")+"&nonce="+encodeURIComponent(LI_ADMIN_NONCE))
         .then(function(r){return r.json();})
         .then(function(data){
+            if(!Array.isArray(data)){data=[];}
             liScData=data;
             var tbody=document.getElementById("li-sc-tbody");
             if(!data||data.length===0){tbody.innerHTML="<tr><td colspan=6 class=li-empty>No products found.</td></tr>";return;}

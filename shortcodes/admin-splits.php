@@ -30,6 +30,7 @@ function li_page_splits() {
         fetch(LI_ADMIN_AJAX+"&path="+encodeURIComponent("orders?select=*,products(name),rescues(name)&order=ordered_at.desc")+"&nonce="+encodeURIComponent(LI_ADMIN_NONCE))
         .then(function(r){if(!r.ok)throw new Error(r.status);return r.json();})
         .then(function(data){
+            if(!Array.isArray(data)){throw new Error("Invalid response");}
             liAllOrders=data;
             var tot=data.reduce(function(s,o){return s+o.sale_amount_cents;},0);
             var res=data.reduce(function(s,o){return s+o.rescue_split_cents;},0);

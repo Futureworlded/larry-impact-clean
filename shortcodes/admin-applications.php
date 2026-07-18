@@ -117,6 +117,7 @@ function li_page_applications() {
         fetch(LI_ADMIN_AJAX+"&path="+encodeURIComponent("rescues?select=*&order=created_at.desc")+"&nonce="+encodeURIComponent(LI_ADMIN_NONCE))
         .then(function(r){return r.json();})
         .then(function(data){
+            if(!Array.isArray(data)){throw new Error("Invalid response");}
             liAppAll=data;
             var pending=data.filter(function(r){return r.status==="pending";});
             document.getElementById("li-pending-count").textContent=pending.length;

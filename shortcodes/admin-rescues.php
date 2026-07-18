@@ -73,6 +73,7 @@ function li_page_rescue_list() {
     fetch(LI_ADMIN_AJAX+"&path="+encodeURIComponent("rescues?select=*&order=created_at.desc")+"&nonce="+encodeURIComponent(LI_ADMIN_NONCE))
     .then(function(r){if(!r.ok)throw new Error(r.status);return r.json();})
     .then(function(data){
+        if(!Array.isArray(data)) data=[];
         var tbody=document.getElementById("li-rescues-tbody");
         if(!data||data.length===0){tbody.innerHTML="<tr><td colspan=5 class=li-empty>No rescues yet.</td></tr>";return;}
         tbody.innerHTML=data.map(function(r){
@@ -279,6 +280,7 @@ function li_page_rescue_detail( $view_id ) {
         fetch(LI_ADMIN_AJAX+"&path="+encodeURIComponent("orders?rescue_id=eq."+LI_RID+"&select=*")+"&nonce="+encodeURIComponent(LI_ADMIN_NONCE))
         .then(function(r){return r.json();})
         .then(function(orders){
+            if(!Array.isArray(orders)) orders=[];
             var t=orders.reduce(function(s,o){return s+o.rescue_split_cents;},0);
             var p=orders.filter(function(o){return o.status==="paid";}).reduce(function(s,o){return s+o.rescue_split_cents;},0);
             document.getElementById("li-rescue-stats").innerHTML=
@@ -292,6 +294,7 @@ function li_page_rescue_detail( $view_id ) {
         fetch(LI_ADMIN_AJAX+"&path="+encodeURIComponent("orders?rescue_id=eq."+LI_RID+"&select=*,products(name)&order=ordered_at.desc")+"&nonce="+encodeURIComponent(LI_ADMIN_NONCE))
         .then(function(r){return r.json();})
         .then(function(orders){
+            if(!Array.isArray(orders)) orders=[];
             var tbody=document.getElementById("li-rescue-orders");
             if(!orders||orders.length===0){tbody.innerHTML="<tr><td colspan=6 class=li-empty>No orders yet.</td></tr>";return;}
             tbody.innerHTML=orders.map(function(o){
@@ -306,6 +309,7 @@ function li_page_rescue_detail( $view_id ) {
         fetch(LI_ADMIN_AJAX+"&path="+encodeURIComponent("orders?rescue_id=eq."+LI_RID+"&select=*,products(name)&order=ordered_at.desc")+"&nonce="+encodeURIComponent(LI_ADMIN_NONCE))
         .then(function(r){return r.json();})
         .then(function(orders){
+            if(!Array.isArray(orders)) orders=[];
             var t=orders.reduce(function(s,o){return s+o.rescue_split_cents;},0);
             var p=orders.filter(function(o){return o.status==="paid";}).reduce(function(s,o){return s+o.rescue_split_cents;},0);
             document.getElementById("li-prev-stats").innerHTML=
