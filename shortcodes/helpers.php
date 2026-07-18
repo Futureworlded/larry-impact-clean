@@ -222,6 +222,51 @@ function li_stripe_webhook_secret() {
     return '';
 }
 
+function li_get_rescue_by_id( $rescue_id ) {
+    $data = li_db_get( 'rescues?id=eq.' . urlencode( $rescue_id ) . '&select=*' );
+    return li_rescue_merge_points( li_rescue_merge_w9( ! empty( $data ) && is_array( $data ) ? $data[0] : null ) );
+}
+
+function li_send_email( $to, $subject, $message ) {
+    $from_name  = get_option( 'li_from_name', 'Larry Impact' );
+    $from_email = get_option( 'li_from_email', get_option( 'admin_email' ) );
+    $reply_to   = get_option( 'li_reply_to', $from_email );
+    $headers    = array(
+        'From: ' . sanitize_text_field( $from_name ) . ' <' . sanitize_email( $from_email ) . '>',
+        'Reply-To: ' . sanitize_email( $reply_to ),
+        'Content-Type: text/plain; charset=UTF-8',
+    );
+    wp_mail( $to, $subject, $message, $headers );
+}
+
+function li_notify_admin( $subject, $message ) {
+    $admin_email = get_option( 'li_admin_email', get_option( 'admin_email' ) );
+    if ( ! $admin_email ) return;
+    li_send_email( $admin_email, $subject, $message );
+}
+
+function li_notify_rescue( $rescue_id, $subject, $message ) {
+    $rescue = li_get_rescue_by_id( $rescue_id );
+    if ( ! $rescue || empty( $rescue['email'] ) ) return;
+    li_send_email( $rescue['email'], $subject, $message );
+}
+
+function li_check_payout_threshold( $rescue_id ) {
+    if ( ! $rescue_id ) return;
+    $pending = li_db_get( 'orders?rescue_id=eq.' . urlencode( $rescue_id ) . '&status=eq.pending&select=rescue_split_cents' );
+    if ( ! is_array( $pending ) ) return;
+    $total_cents = array_sum( array_map( function( $o ) { return intval( $o['rescue_split_cents'] ?? 0 ); }, $pending ) );
+    if ( $total_cents < 50000 ) return;
+    if ( get_transient( 'li_threshold_notified_' . $rescue_id ) ) return;
+    set_transient( 'li_threshold_notified_' . $rescue_id, 1, DAY_IN_SECONDS );
+    $rescue = li_get_rescue_by_id( $rescue_id );
+    $name   = $rescue ? ( $rescue['name'] ?? 'A rescue' ) : 'A rescue';
+    li_notify_admin(
+        'Pending payout exceeds $500: ' . $name,
+        "Rescue: {$name}\nPending payout balance: $" . number_format( $total_cents / 100, 2 ) . "\n\nReview payouts: " . admin_url( 'admin.php?page=li-payouts' )
+    );
+}
+
 function li_create_rescue_wp_user( $name, $email, $send_email = true ) {
     $email = sanitize_email( $email );
     $user  = get_user_by( 'email', $email );
@@ -324,7 +369,12 @@ function li_process_rescue_payout( $rescue ) {
     $body          = json_decode( wp_remote_retrieve_body( $r ), true );
     if ( is_wp_error( $r ) || $response_code >= 400 ) {
         li_audit_log( 'payout_stripe_failed', array( 'rescue_id' => $rescue_id, 'response' => $body ), 'payout', $rescue_id );
-        return array( 'success' => false, 'message' => ( $body['error']['message'] ?? 'Stripe transfer failed.' ) );
+        $error = is_wp_error( $r ) ? $r->get_error_message() : ( $body['error']['message'] ?? 'Stripe transfer failed.' );
+        li_notify_admin(
+            'Payout failed: ' . ( $rescue['name'] ?? 'Rescue' ),
+            "Rescue: " . ( $rescue['name'] ?? 'Rescue' ) . "\nAmount: $" . number_format( $total_cents / 100, 2 ) . "\nError: $error\n\nReview payouts: " . admin_url( 'admin.php?page=li-payouts' )
+        );
+        return array( 'success' => false, 'message' => $error );
     }
     $transfer_id = $body['id'] ?? '';
 
@@ -558,6 +608,7 @@ function li_record_order( $args ) {
     ) );
     li_lock_order( $line_order_id );
     li_audit_log( 'order_recorded', array( 'order_ref' => $line_order_id, 'amount_cents' => $sale_cents ), 'order', $line_order_id );
+    li_check_payout_threshold( $rescue_id );
     return true;
 }
 

@@ -143,6 +143,17 @@ function li_handle_stripe_payout_paid( $object ) {
         return;
     }
 
+    $rescue_for_email = li_get_rescue_by_id( $rescue_id );
+    $rescue_name      = $rescue_for_email ? ( $rescue_for_email['name'] ?? 'Your rescue' ) : 'Your rescue';
+    $amount_dollars   = number_format( $amount_cents / 100, 2 );
+
+    li_notify_rescue( $rescue_id, "Payout sent: \$$amount_dollars from Larry Impact", "Hi,\n\nA payout of \$$amount_dollars has been sent to your rescue ($rescue_name). Transfer ID: $transfer_id\n\nThank you,\nLarry Impact" );
+    li_notify_admin( "Payout confirmed: $rescue_name", "Rescue: $rescue_name\nAmount: \$$amount_dollars\nTransfer ID: $transfer_id\n\nReview payouts: " . admin_url( 'admin.php?page=li-payouts' ) );
+
+    if ( $amount_cents > 50000 ) {
+        li_notify_admin( "Payout over $500 sent: $rescue_name", "Rescue: $rescue_name\nAmount: \$$amount_dollars\nTransfer ID: $transfer_id" );
+    }
+
     if ( is_array( $order_refs ) && ! empty( $order_refs ) ) {
         foreach ( $order_refs as $ref ) {
             $ref = sanitize_text_field( $ref );
@@ -297,6 +308,23 @@ function li_record_stripe_reversal( $wc_order, $total_cents, $entry_type, $charg
                 li_db_patch( 'orders?id=eq.' . urlencode( $o['id'] ), array( 'status' => $new_status ) );
             }
         }
+    }
+
+    $dollars       = number_format( $total_cents / 100, 2 );
+    $rescue_name   = $rescue ? ( $rescue['name'] ?? 'Rescue' ) : 'Rescue';
+    $subject_label = $entry_type === 'chargeback' ? 'Chargeback' : 'Refund';
+
+    li_notify_admin(
+        "$subject_label received: Order #$order_number",
+        "$subject_label of \$$dollars received for order #$order_number.\nCharge ID: $charge_id\nRescue: $rescue_name\n\nReview orders: " . admin_url( 'admin.php?page=li-splits' )
+    );
+
+    if ( $rescue_id ) {
+        li_notify_rescue(
+            $rescue_id,
+            "$subject_label on your Larry Impact order",
+            "Hi,\n\nA $subject_label of \$$dollars has been initiated on order #$order_number for $rescue_name. This may affect your pending payout.\n\nThank you,\nLarry Impact"
+        );
     }
 
     li_audit_log( $entry_type . '_received', array(
