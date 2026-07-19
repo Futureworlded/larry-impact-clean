@@ -82,8 +82,9 @@ add_filter( 'woocommerce_shortcode_products_query', 'li_merch_products_show_all'
 function li_merch_products_show_all( $query_args, $atts, $type ) {
     if ( ! empty( $atts['category'] ) && $atts['category'] === 'merch' ) {
         $query_args['posts_per_page'] = 50;
-        $query_args['orderby']        = 'date ID';
-        $query_args['order']          = 'DESC';
+        $query_args['orderby']        = 'menu_order';
+        $query_args['order']          = 'ASC';
     }
     return $query_args;
 }
+
