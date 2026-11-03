@@ -5,7 +5,7 @@ if ( ! defined( 'ABSPATH' ) ) exit;
  * Larry Impact - Stripe webhook endpoint.
  *
  * Handles:
- * - transfer.paid / payout.paid: confirms a Stripe Transfer succeeded and marks
+ * - transfer.created (transfer.paid / payout.paid on older API versions): confirms a Stripe Transfer succeeded and marks
  *   the matching orders + local payout record as completed.
  * - charge.dispute.created: records a chargeback ledger entry, flags fraud,
  *   and updates the matching order status to disputed.
@@ -42,6 +42,7 @@ function li_handle_stripe_webhook( WP_REST_Request $request ) {
     $object = $event['data']['object'] ?? array();
 
     switch ( $type ) {
+        case 'transfer.created':
         case 'transfer.paid':
         case 'payout.paid':
             li_handle_stripe_payout_paid( $object );
@@ -101,7 +102,10 @@ function li_handle_stripe_payout_paid( $object ) {
     $payout = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$wpdb->prefix}li_payouts WHERE transfer_id = %s LIMIT 1", $transfer_id ), ARRAY_A );
 
     if ( $payout ) {
-        if ( $payout['status'] !== 'completed' ) {
+        if ( 'completed' === $payout['status'] ) {
+            return;
+        }
+        {
             $wpdb->update(
                 $wpdb->prefix . 'li_payouts',
                 array( 'status' => 'completed' ),
