@@ -24,54 +24,25 @@ function li_ajax_approve_rescue() {
     }
 
     // Create or update WordPress login account for the rescue.
-    $password = '';
-    $user     = get_user_by( 'email', $email );
-    if ( ! $user ) {
-        $password = wp_generate_password( 12, true );
-        $username = sanitize_user( $name );
-        if ( ! $username || username_exists( $username ) ) {
-            $username = sanitize_user( current( explode( '@', $email ) ) );
-        }
-        if ( username_exists( $username ) ) {
-            $username .= '_' . wp_rand( 100, 999 );
-        }
-        $user_id = wp_create_user( $username, $password, $email );
-        if ( is_wp_error( $user_id ) ) {
-            li_log( 'Failed to create WP user for rescue ' . $id . ': ' . $user_id->get_error_message() );
-            $password = '';
-        } else {
-            $user = get_user_by( 'id', $user_id );
-        }
-    }
-    if ( $user && ! in_array( 'administrator', $user->roles ) ) {
-        wp_update_user( array( 'ID' => $user->ID, 'role' => 'rescue_partner' ) );
-    }
+    $result   = li_create_rescue_wp_user( $name, $email, true );
+    $password = $result['password'] ?? '';
+    $username = $result['username'] ?? '';
+    $user_id  = intval( $result['user_id'] ?? 0 );
 
     // Publish / update the rescue partner page.
     if ( function_exists( 'li_create_rescue_pages' ) ) {
         li_create_rescue_pages();
     }
 
-    // Try to send welcome email (best-effort; SMTP may not be configured).
     $login_url = home_url( '/rescue-login/' );
-    if ( $password && $user ) {
-        wp_mail(
-            $email,
-            'Your Larry Impact rescue account is approved',
-            "Hi {$name},\n\nYour rescue application has been approved.\n\nLogin: {$login_url}\nEmail: {$email}\nPassword: {$password}\n\nPlease sign in and complete your bank and tax information under Bank and Payout.\n\nThe Larry Impact Team"
-        );
-    } elseif ( $user ) {
-        wp_mail(
-            $email,
-            'Your Larry Impact rescue account is approved',
-            "Hi {$name},\n\nYour rescue application has been approved.\n\nLogin: {$login_url}\nEmail: {$email}\n\nPlease sign in and complete your bank and tax information under Bank and Payout.\n\nThe Larry Impact Team"
-        );
-    }
-
     wp_send_json_success( array(
-        'message'   => $name . ' has been approved and a login account was created.',
-        'password'  => $password,
-        'login_url' => $login_url,
+        'message'    => $name . ' has been approved and a login account was created.',
+        'password'   => $password,
+        'username'   => $username,
+        'email'      => $email,
+        'email_sent' => ! empty( $result['email_sent'] ),
+        'login_url'  => $login_url,
+        'user_id'    => $user_id,
     ) );
 }
 
@@ -111,7 +82,7 @@ function li_page_applications() {
     echo li_js_vars();
     echo 'var LI_APPROVE_NONCE="' . $nonce . '";';
     echo 'var LI_AJAX="' . $ajax . '";';
-    echo '
+    echo <<<'JS'
     var liAppAll=[];var liAppCurrent="pending";
     function liAppLoad(){
         fetch(LI_ADMIN_AJAX+"&path="+encodeURIComponent("rescues?select=*&order=created_at.desc")+"&nonce="+encodeURIComponent(LI_ADMIN_NONCE))
@@ -131,6 +102,11 @@ function li_page_applications() {
         btn.classList.add("li-tab-active");
         liAppRender(tab);
     }
+    function escHtml(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+    function liAppAttach(){
+        document.querySelectorAll(".li-app-approve").forEach(function(btn){btn.addEventListener("click",function(){liAppApprove(btn.dataset.id,btn.dataset.name,btn.dataset.email);});});
+        document.querySelectorAll(".li-app-decline").forEach(function(btn){btn.addEventListener("click",function(){liAppDecline(btn.dataset.id);});});
+    }
     function liAppRender(status){
         var tbody=document.getElementById("li-app-tbody");
         var filtered=liAppAll.filter(function(r){return r.status===status;});
@@ -144,18 +120,19 @@ function li_page_applications() {
             var loc=[r.city,r.state].filter(Boolean).join(", ")||"--";
             var actions="";
             if(status==="pending"){
-                actions="<div style=display:flex;gap:8px>"
-                    +"<button class=\"li-btn li-btn-sm\" style=background:#3a7a4a onclick=liAppApprove("+JSON.stringify(r.id)+","+JSON.stringify(r.name||"")+","+JSON.stringify(r.email||"")+")>Approve</button>"
-                    +"<button class=\"li-btn li-btn-sm\" style=background:#b91c1c onclick=liAppDecline("+JSON.stringify(r.id)+")>Decline</button>"
-                    +"</div>";
+                actions='<div style="display:flex;gap:8px">'
+                    +'<button class="li-btn li-btn-sm li-app-approve" data-id="'+escHtml(r.id)+'" data-name="'+escHtml(r.name||'')+'" data-email="'+escHtml(r.email||'')+'" style="background:#3a7a4a">Approve</button>'
+                    +'<button class="li-btn li-btn-sm li-app-decline" data-id="'+escHtml(r.id)+'" style="background:#b91c1c">Decline</button>'
+                    +'</div>';
             }else{
                 var bc=status==="approved"?"li-badge-approved":"li-badge-declined";
-                actions="<span class=\"li-badge "+bc+"\">"+status+"</span>";
+                actions='<span class="li-badge '+bc+'">'+status+'</span>';
             }
             return "<tr><td><strong>"+(r.name||"--")+"</strong><br><span style=font-size:11px;color:#a89880>"+(r.email||"")+"</span></td>"
                 +"<td><span style=font-size:12px;color:#6b6560>"+(r.phone||"--")+"</span></td>"
                 +"<td>"+loc+"</td><td>"+d+"</td><td>"+actions+"</td></tr>";
         }).join("");
+        liAppAttach();
     }
     async function liAppApprove(id,name,email){
         if(!confirm("Approve "+name+" and create a login account?"))return;
@@ -163,8 +140,7 @@ function li_page_applications() {
             var fd=new FormData();fd.append("action","li_approve_rescue");fd.append("nonce",LI_APPROVE_NONCE);fd.append("id",id);fd.append("name",name);fd.append("email",email);
             var res=await fetch(LI_AJAX,{method:"POST",body:fd});var data=await res.json();
             if(!data.success)throw new Error(data.data&&data.data.message?data.data.message:"Approve failed");
-            var extra=data.data&&data.data.password?" Temporary password: "+data.data.password:"";
-            liAppShowMsg("ok",name+" has been approved."+extra);
+            liAppShowApproval(name,data.data);
             liAppLoad();
         }catch(e){liAppShowMsg("err",e.message||"Could not approve. Please try again.");}
     }
@@ -181,10 +157,31 @@ function li_page_applications() {
     function liAppShowMsg(type,text){
         var el=document.getElementById("li-app-msg");
         el.className=type==="ok"?"li-msg-ok":"li-msg-err";
-        el.textContent=text;el.style.display="block";
-        setTimeout(function(){el.style.display="none";},6000);
+        el.innerHTML='<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;"><span>'+escHtml(text)+'</span><button type="button" style="background:transparent;border:none;cursor:pointer;font-size:16px;font-weight:700;color:inherit;" onclick="this.parentElement.parentElement.style.display=\'none\'">×</button></div>';
+        el.style.display="block";
+    }
+    function liAppShowApproval(name,data){
+        var el=document.getElementById("li-app-msg");
+        el.className="li-msg-ok";
+        var html='<p><strong>'+escHtml(name)+'</strong> has been approved.</p>';
+        if(data.email_sent){
+            html+='<p style="font-size:13px;margin-top:6px;">A welcome email was sent to <strong>'+escHtml(data.email||"")+'</strong>.</p>';
+        } else {
+            html+='<p style="font-size:13px;margin-top:6px;">The rescue can log in at <a href="'+escHtml(data.login_url||"")+'">'+escHtml(data.login_url||"")+'</a>.</p>';
+        }
+        if(data.username){
+            html+='<p style="font-size:13px;margin-top:8px;">Username: <code>'+escHtml(data.username)+'</code></p>';
+        }
+        if(data.password){
+            html+='<p style="font-size:13px;margin-top:8px;">Temporary password: <input type="text" readonly value="'+escHtml(data.password)+'" style="font-family:monospace;width:160px;border:1px solid #ddd8d0;border-radius:4px;padding:4px;" />'+
+                ' <button type="button" class="li-btn li-btn-sm" onclick="navigator.clipboard.writeText(this.previousElementSibling.value).then(()=>{this.textContent=\'Copied\';setTimeout(()=>this.textContent=\'Copy\',1500);}).catch(()=>{this.textContent=\'Select & copy\';})">Copy</button></p>';
+        }
+        html+='<p style="font-size:12px;margin-top:8px;"><button type="button" style="background:transparent;border:none;cursor:pointer;text-decoration:underline;color:inherit;padding:0;" onclick="document.getElementById(\'li-app-msg\').style.display=\'none\'">Dismiss</button></p>';
+        el.innerHTML=html;
+        el.style.display="block";
     }
     document.addEventListener("DOMContentLoaded",liAppLoad);
-    </script>';
+    </script>
+JS;
     li_admin_wrap( 'Applications', ob_get_clean() );
 }

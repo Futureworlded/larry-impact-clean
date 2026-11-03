@@ -12,7 +12,7 @@ function li_validate_upload_file( $file, $allowed_ext ) {
     }
 
     $allowed_ext = array_map( 'strtolower', $allowed_ext );
-    $filetype = wp_check_filetype_and_ext( $file['tmp_name'], $file['name'], $allowed_ext );
+    $filetype = wp_check_filetype_and_ext( $file['tmp_name'], $file['name'], null );
     if ( empty( $filetype['ext'] ) || empty( $filetype['type'] ) ) {
         return 'Invalid or unsafe file type.';
     }

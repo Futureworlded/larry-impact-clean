@@ -24,11 +24,6 @@ function li_sync_product( $product_id ) {
     if ( ! $product ) return;
 
     $terms = li_get_product_categories( $product_id );
-    if ( $terms ) {
-        foreach ( $terms as $term ) {
-            if ( $term->slug === 'coffee' ) return;
-        }
-    }
 
     if ( $product->get_type() === 'variable' ) {
         foreach ( $product->get_children() as $vid ) {
@@ -57,7 +52,7 @@ function li_sync_product( $product_id ) {
     }
 
     $payload = array(
-        'name'        => $product->get_name(),
+        'name'        => li_wc_product_display_name( $product ),
         'sku'         => $sku,
         'description' => implode( ', ', $cats ),
         'price_cents' => $price,
@@ -81,38 +76,52 @@ function li_sync_product( $product_id ) {
 
 function li_delete_product( $product_id ) {
     if ( ! function_exists( 'wc_get_product' ) ) return;
-    if ( get_post_type( $product_id ) !== 'product' ) return;
+    $post_type = get_post_type( $product_id );
+    if ( ! in_array( $post_type, array( 'product', 'product_variation' ), true ) ) return;
     $product = wc_get_product( $product_id );
     if ( ! $product ) return;
     $sku = $product->get_sku() ? $product->get_sku() : 'WC-' . $product_id;
-    wp_remote_request( LI_DB_URL . '/rest/v1/products?sku=eq.' . urlencode( $sku ), array(
-        'method'  => 'DELETE',
-        'headers' => array( 'apikey' => li_service_key(), 'Authorization' => 'Bearer ' . li_service_key() ),
-    ) );
+    $existing = li_db_get( 'products?sku=eq.' . urlencode( $sku ) . '&select=id' );
+    if ( empty( $existing ) ) return;
+    li_db_patch( 'products?id=eq.' . urlencode( $existing[0]['id'] ), array( 'active' => false ) );
 }
 
 add_action( 'woocommerce_update_product', 'li_sync_product', 10, 1 );
 add_action( 'woocommerce_new_product',    'li_sync_product', 10, 1 );
 add_action( 'before_delete_post',         'li_delete_product', 10, 1 );
 
-function li_handle_woo_sync() {
-    if ( ! isset( $_POST['li_woo_sync_nonce'] ) || ! wp_verify_nonce( $_POST['li_woo_sync_nonce'], 'li_woo_sync' ) || ! current_user_can( 'manage_options' ) ) return;
-    if ( ! function_exists( 'wc_get_products' ) ) { wp_redirect( admin_url( 'admin.php?page=li-rescues' ) ); exit; }
+function li_run_woo_sync() {
+    if ( ! function_exists( 'wc_get_products' ) ) {
+        return array( 'synced' => 0, 'skipped' => 0, 'hidden' => 0 );
+    }
     $products = wc_get_products( array( 'status' => 'publish', 'limit' => -1 ) );
     $synced = 0; $skipped = 0;
     foreach ( $products as $product ) {
-        $terms = li_get_product_categories( $product->get_id() );
-        $is_coffee = false;
-        if ( $terms ) foreach ( $terms as $t ) if ( $t->slug === 'coffee' ) { $is_coffee = true; break; }
-        if ( $is_coffee ) { $skipped++; continue; }
         li_sync_product( $product->get_id() );
         $synced++;
     }
-    set_transient( 'li_sync_result', array( 'synced' => $synced, 'skipped' => $skipped ), 60 );
+    $hidden = li_deactivate_orphan_products();
+    return array( 'synced' => $synced, 'skipped' => $skipped, 'hidden' => $hidden );
+}
+
+function li_handle_woo_sync() {
+    if ( ! isset( $_POST['li_woo_sync_nonce'] ) || ! wp_verify_nonce( $_POST['li_woo_sync_nonce'], 'li_woo_sync' ) || ! current_user_can( 'manage_options' ) ) return;
+    $result = li_run_woo_sync();
+    set_transient( 'li_sync_result', $result, 60 );
     wp_redirect( admin_url( 'admin.php?page=li-rescues&synced=1' ) );
     exit;
 }
 add_action( 'admin_post_li_woo_sync', 'li_handle_woo_sync' );
+
+add_action( 'wp_ajax_li_woo_sync', 'li_ajax_woo_sync' );
+function li_ajax_woo_sync() {
+    check_ajax_referer( 'li_woo_sync', 'nonce' );
+    if ( ! current_user_can( 'manage_options' ) ) {
+        wp_send_json_error( array( 'message' => 'Unauthorized.' ) );
+    }
+    $result = li_run_woo_sync();
+    wp_send_json_success( $result );
+}
 
 // WooCommerce order recording
 
@@ -224,6 +233,36 @@ function li_handle_shopify_webhook( WP_REST_Request $request ) {
     $order_number = ltrim( sanitize_text_field( $payload['name'] ?? strval( $payload['id'] ?? '0' ) ), '#' );
     $channel      = 'shopify';
 
+    // Shopify Bundles sends component lines instead of the parent bundle.
+    // Collapse the known Big Rescue Treat Box composition into its parent SKU
+    // so the configured $8 rescue payout is applied exactly once.
+    $bundle_qty = array();
+    foreach ( $payload['line_items'] as $bundle_line ) {
+        $bundle_sku = sanitize_text_field( $bundle_line['sku'] ?? '' );
+        if ( $bundle_sku ) {
+            $bundle_qty[ $bundle_sku ] = ( $bundle_qty[ $bundle_sku ] ?? 0 ) + max( 1, intval( $bundle_line['quantity'] ?? 1 ) );
+        }
+    }
+    if ( count( $bundle_qty ) === 3
+        && intval( $bundle_qty['46602'] ?? 0 ) === 4
+        && intval( $bundle_qty['46334'] ?? 0 ) === 2
+        && intval( $bundle_qty['45729'] ?? 0 ) === 2 ) {
+        $bundle_product = li_get_product_by_sku( 'LI-BIG-TREAT-BOX' );
+        if ( $bundle_product ) {
+            $bundle_total = floatval( $payload['current_subtotal_price'] ?? $payload['subtotal_price'] ?? $payload['total_line_items_price'] ?? 64.99 );
+            li_record_order( array(
+                'order_id'   => $order_number,
+                'rescue_id'  => $rescue ? $rescue['id'] : null,
+                'product_id' => $bundle_product['id'],
+                'sale_cents' => intval( round( $bundle_total * 100 ) ),
+                'quantity'   => 1,
+                'channel'    => $channel,
+                'ordered_at' => $ordered_at,
+            ) );
+            return new WP_REST_Response( array( 'status' => 'ok', 'bundle' => 'LI-BIG-TREAT-BOX' ), 200 );
+        }
+    }
+
     foreach ( $payload['line_items'] as $line ) {
         $sku   = sanitize_text_field( $line['sku'] ?? '' );
         $price = floatval( $line['price'] ?? 0 );
@@ -280,3 +319,55 @@ function li_save_product_cost_field( $product ) {
         $product->update_meta_data( '_li_cost_cents', $cost );
     }
 }
+
+// Rescue payout field for split calculations
+add_action( 'woocommerce_product_options_general_product_data', 'li_add_product_rescue_cents_field', 15 );
+function li_add_product_rescue_cents_field() {
+    global $post;
+    $value = '';
+    if ( $post ) {
+        $cents = get_post_meta( $post->ID, '_li_rescue_cents', true );
+        if ( '' !== $cents ) {
+            $value = number_format( intval( $cents ) / 100, 2 );
+        }
+    }
+    woocommerce_wp_text_input( array(
+        'id'          => '_li_rescue_cents',
+        'label'       => 'Rescue payout ($)',
+        'description' => 'Fixed dollar amount that goes to the rescue for each unit sold. Leave blank to use the default split.',
+        'type'        => 'number',
+        'value'       => $value,
+        'custom_attributes' => array( 'step' => '0.01', 'min' => '0' ),
+        'desc_tip'    => true,
+    ) );
+}
+
+add_action( 'woocommerce_admin_process_product_object', 'li_save_product_rescue_cents_field', 10, 1 );
+function li_save_product_rescue_cents_field( $product ) {
+    if ( isset( $_POST['_li_rescue_cents'] ) ) {
+        $dollars = floatval( $_POST['_li_rescue_cents'] );
+        $cents   = max( 0, intval( round( $dollars * 100 ) ) );
+        $product->update_meta_data( '_li_rescue_cents', $cents );
+    }
+}
+
+
+// One-time idempotent repair for paid Shopify bundle order LR-1005.
+add_action( 'admin_init', function() {
+    if ( empty( $_GET['li_backfill_lr1005'] ) || ! current_user_can( 'manage_options' ) ) return;
+    $rescue = li_get_rescue_by_slug( 'the-kris-kelly-foundation' );
+    $product = li_get_product_by_sku( 'LI-BIG-TREAT-BOX' );
+    if ( $rescue && $product ) {
+        li_record_order( array(
+            'order_id'   => 'LR-1005',
+            'rescue_id'  => $rescue['id'],
+            'product_id' => $product['id'],
+            'sale_cents' => 6499,
+            'quantity'   => 1,
+            'channel'    => 'shopify',
+            'ordered_at' => '2026-10-30T09:58:00-07:00',
+        ) );
+    }
+    wp_safe_redirect( admin_url( 'admin.php?page=li-splits&lr1005_repaired=1' ) );
+    exit;
+} );

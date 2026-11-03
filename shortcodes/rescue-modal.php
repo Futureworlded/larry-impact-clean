@@ -3,6 +3,15 @@
 
 if ( ! defined( 'ABSPATH' ) ) exit;
 
+function li_default_rescue() {
+    $rescue = li_get_rescue_by_name( 'Let A Rescue Rescue You' );
+    if ( ! $rescue ) {
+        $rescues = li_db_get( 'rescues?status=eq.approved&select=*&limit=1&order=name.asc' );
+        if ( ! empty( $rescues ) ) $rescue = $rescues[0];
+    }
+    return $rescue;
+}
+
 // Auto-set rescue cookie from rescue partner pages
 
 add_action( 'template_redirect', 'li_set_rescue_cookie_early', 20 );
@@ -45,6 +54,28 @@ function li_set_rescue_cookie_early() {
         if ( isset( $_COOKIE['li_rescue_skipped'] ) ) {
             setcookie( 'li_rescue_skipped', '', time() - 3600, '/' );
         }
+    }
+}
+
+add_action( 'template_redirect', 'li_set_default_homepage_rescue', 25 );
+function li_set_default_homepage_rescue() {
+    if ( isset( $_GET['fl_builder'] ) ) return;
+    if ( ! is_front_page() && ! is_home() ) return;
+    if ( ! empty( $_COOKIE['li_rescue_slug'] ) ) return;
+    $rescue = li_default_rescue();
+    if ( ! $rescue ) return;
+    $slug = $rescue['slug'] ?? '';
+    $name = $rescue['name'] ?? '';
+    if ( ! $slug ) return;
+    if ( function_exists( 'WC' ) && WC()->session ) {
+        WC()->session->set( 'li_rescue_slug', $slug );
+        WC()->session->set( 'li_rescue_name', $name );
+    }
+    $exp = time() + ( 30 * DAY_IN_SECONDS );
+    setcookie( 'li_rescue_slug', $slug, $exp, '/' );
+    setcookie( 'li_rescue_name', $name, $exp, '/' );
+    if ( isset( $_COOKIE['li_rescue_skipped'] ) ) {
+        setcookie( 'li_rescue_skipped', '', time() - 3600, '/' );
     }
 }
 
@@ -534,11 +565,43 @@ add_action( 'woocommerce_checkout_create_order', function( $order ) {
         $slug = sanitize_text_field( $_COOKIE['li_rescue_slug'] ?? '' );
         $name = sanitize_text_field( $_COOKIE['li_rescue_name'] ?? '' );
     }
+    if ( empty( $slug ) && empty( $_COOKIE['li_rescue_skipped'] ) ) {
+        $rescue = li_default_rescue();
+        if ( $rescue ) {
+            $slug = $rescue['slug'] ?? '';
+            $name = $rescue['name'] ?? '';
+        }
+    }
     if ( $slug ) {
         $order->update_meta_data( '_li_rescue_slug', $slug );
         $order->update_meta_data( '_li_rescue_name', $name );
     }
 }, 20 );
+
+// Append default rescue to Shopify Buy Now links when no rescue is selected
+
+add_action( 'wp_footer', 'li_rewrite_shopify_rescue_links', 100 );
+function li_rewrite_shopify_rescue_links() {
+    if ( is_admin() ) return;
+    if ( isset( $_GET['fl_builder'] ) ) return;
+    $rescue = li_default_rescue();
+    $default_slug = $rescue['slug'] ?? '';
+    if ( ! $default_slug ) return;
+    echo "<script>
+    (function(){
+        function getCookie(n){var v=document.cookie.match('(^|;) ?'+n+'=([^;]*)(;|$)');return v?decodeURIComponent(v[2]):null;}
+        var slug = getCookie('li_rescue_slug') || " . json_encode( $default_slug ) . ";
+        if (!slug) return;
+        var links = document.querySelectorAll('a[href*=\"larrybev.myshopify.com\"]');
+        for (var i=0;i<links.length;i++){
+            var a=links[i];
+            if (a.href.indexOf('rescue=') !== -1) continue;
+            var sep = a.href.indexOf('?') === -1 ? '?' : '&';
+            a.href = a.href + sep + 'rescue=' + encodeURIComponent(slug);
+        }
+    })();
+    </script>";
+}
 
 // Show rescue in WP admin order view
 

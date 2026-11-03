@@ -28,7 +28,7 @@ This guide explains how each part of the Larry Impact application works and what
 
 ## How the overall system works
 
-Larry Impact is a platform where supporters buy products and part of every sale goes to an animal rescue organization. Here is the lifecycle of a typical order:
+Larry Impact is a platform where supporters buy products and a fixed dollar amount from every sale goes to an animal rescue organization. Here is the lifecycle of a typical order:
 
 1.  A shopper visits the store and buys a product.
 2.  The system records the order, locks the sale, and calculates the rescue share.
@@ -36,8 +36,11 @@ Larry Impact is a platform where supporters buy products and part of every sale 
 4.  When enough money is owed to a rescue, the admin can prepare a payout batch.
 5.  The batch is reviewed, approved, and paid to the rescue's connected account.
 6.  The rescue receives an email that the payout is on its way.
+7.  If a shopper visits the homepage without first choosing a rescue, the sale is attributed to the default rescue (currently **Let A Rescue Rescue You**).
 
 The system also watches for refunds and disputes. If a customer is refunded after a payout has already been sent, the rescue's next payout is adjusted automatically.
+
+The rescue payout is a fixed dollar amount per product, set in the Split Configurator. Larry Impact receives the remainder of the sale after the rescue amount and product cost.
 
 ---
 
@@ -91,6 +94,8 @@ After logging in, rescues land on `/dashboard/`. The dashboard has several tabs:
 #### Setup / My account
 - Used to connect a Stripe account so the rescue can receive direct deposits.
 - If the rescue has not completed this step, payouts cannot be sent.
+- The rescue clicks **Connect bank account**, completes Stripe's onboarding, and the admin can see the connection status under **Larry Impact > Rescues > [rescue] > Account**.
+- If a rescue loses the onboarding email or gets stuck, the admin can open the rescue's **Account** tab and click **Send onboarding email** to resend the link.
 
 #### Settings
 - Lets the rescue update its display name, email, and password.
@@ -108,6 +113,12 @@ Each approved rescue gets its own public page on the website. These pages can be
 - In the admin, go to **Larry Impact > Rescue Pages**.
 - Click **Sync All Rescue Pages Now**.
 - The system generates one page for each approved rescue.
+
+**What appears on a rescue page:**
+- The rescue name, logo, description, and social links.
+- A **YOUR IMPACT** card that explains how shopping supports that rescue.
+- Merch products grouped by design subcategory under the main **Merch** category.
+- Coffee products in the priority order: **Pony Espresso**, **Rescue Roast**, **Bark Roast**, followed by the rest.
 
 ---
 
@@ -130,6 +141,13 @@ This is the main list of all rescue organizations.
 - Review the list.
 - Pending rescues appear here only after they are approved on the Applications page.
 - If a rescue's profile is missing, click the rescue row or use **Rescue Pages** to sync its public page.
+
+#### Account / bank status
+- In the rescue list, click a rescue name to open its profile.
+- Click the **Account** tab.
+- If the rescue has connected a Stripe account, the status and last-4 digits are shown.
+- If the rescue has not connected a bank account, click **Send onboarding email** to resend the Stripe Connect link.
+- The rescue can also log in to `/rescue-login/`, go to **Setup / My account**, and click **Connect bank account** to start the process.
 
 ### Applications
 
@@ -156,33 +174,38 @@ This shows how revenue is divided between the rescue, Larry Impact, and product 
 
 **What you see:**
 - Products and their associated rescues.
-- The split percentages for each product.
+- The fixed dollar rescue payout and Larry Impact remainder for each product.
 - Estimated earnings per sale.
 
 **What you do:**
 - Use this page to quickly review which products are linked to which rescues.
-- If a split looks wrong, go to **Split Configurator** to update it.
+- If a payout looks wrong, go to **Split Configurator** to update it.
 
 ### Split Configurator
 
-This is where you control how much of each product sale goes to the rescue and how much stays with the platform.
+This is where you control the fixed dollar amount that goes to the rescue for each product. Larry Impact keeps the remainder of the sale after the rescue amount and product cost.
 
 **Important concept:**
-- Splits are stored as a history of versions. When you change a split, the system records the new version with a date.
-- Old orders keep the split version that was active when the order happened. New orders use the latest version.
-- This means you can safely change future splits without changing past earnings.
+- The product list is built from the live WooCommerce catalog, so it always reflects the products that actually exist.
+- Products that no longer exist in WooCommerce are shown with a red **(not in WooCommerce)** label.
+- Splits are stored as a history of versions. When you change an amount, the system records the new version with a date.
+- Old orders keep the payout that was active when the order happened. New orders use the latest amount.
+- This means you can safely change future payouts without changing past earnings.
 
-**How to update a split:**
+**How to update a product payout:**
 1.  Go to **Larry Impact > Split Configurator**.
 2.  Find the product in the list.
-3.  Enter the **Rescue %** (the share of the net sale that goes to the rescue).
-4.  Enter the **Larry %** (the share that stays with the platform after cost).
-5.  The **Net to Larry** amount updates automatically.
-6.  Click **Save changes**.
+3.  Enter the **Amount to rescue** (the fixed dollar amount the rescue receives for each unit sold).
+4.  The **Larry keeps** amount updates automatically.
+5.  Click **Save changes**.
 
 **How to recalculate all products:**
-- If product prices or costs have changed, click **Recalculate all** to refresh the splits.
+- If product prices or costs have changed, click **Recalculate all** to refresh the defaults.
 - The system will use the default rescue share set in **Settings** unless a specific value is saved for a product.
+
+**How to remove obsolete products:**
+- If you see old products labeled **(not in WooCommerce)**, click **Hide** on that row to remove it from the list.
+- To hide all obsolete products at once, click **Clean up obsolete products** at the top of the page.
 
 ### Payouts
 
@@ -257,7 +280,7 @@ This is where platform-wide defaults are managed.
 **What you can change:**
 - **Platform name** - The name used in emails.
 - **Admin notification email** - Where new application alerts are sent.
-- **Default rescue share** - The default percentage of net profit that goes to a rescue for new products.
+- **Default rescue share** - The default percentage of net profit used to calculate a starting rescue payout for new products. You can override this per product in the Split Configurator.
 - **Minimum payout threshold** - The smallest amount a rescue must earn before a payout batch is created.
 - **Currency code and symbol** - The currency used for reports and payouts, for example `USD` and `$`.
 - **Stripe credentials** - The connection to the payment company. These should only be changed by the person managing the payment account.
@@ -291,13 +314,14 @@ This page lets you generate or refresh the public profile pages for each approve
 4.  The rescue receives a login email.
 5.  Go to **Rescue Pages** and click **Sync All Rescue Pages Now** to publish the rescue's public page.
 
-### Change a product split
+### Change a product payout
 
 1.  Go to **Split Configurator**.
 2.  Find the product.
-3.  Update the **Rescue %** and **Larry %**.
-4.  Click **Save changes**.
-5.  The system records a new split version. New orders will use the new split. Old orders keep the old split.
+3.  Enter the **Amount to rescue** (fixed dollar amount per unit).
+4.  The **Larry keeps** amount updates automatically.
+5.  Click **Save changes**.
+6.  The system records a new payout version. New orders will use the new amount. Old orders keep the old amount.
 
 ### Pay a rescue
 
@@ -318,6 +342,41 @@ This page lets you generate or refresh the public profile pages for each approve
 - When a payment dispute comes in, the system marks the order as disputed.
 - The platform should stop the related payout if possible and adjust future payouts until the dispute is resolved.
 
+### Add a Merch product under the new design categories
+
+1.  Add or edit the product in the **Larry Rescue** Printful store and push it to WooCommerce.
+2.  In WordPress, go to **WooCommerce > Products**.
+3.  Assign the product to the matching design subcategory under **Merch** (for example, **People Suck** or **Black Dog Lives Matter**).
+4.  Go to **Larry Impact > Rescue Pages** and click **Sync All Rescue Pages Now** so the product appears on rescue pages.
+
+### Check a rescue's Stripe / bank status or resend onboarding
+
+1.  Go to **Larry Impact > Rescues**.
+2.  Click the rescue name and open the **Account** tab.
+3.  If a Stripe account has been created but onboarding is not complete, click **Send onboarding email** to resend the Stripe Connect link.
+4.  If no Stripe account exists, the rescue must first log in at `/rescue-login/`, go to **Setup / My account**, and click **Connect bank account** to create one.
+5.  If the rescue sees a Stripe error, the platform owner must enable Stripe Connect at https://dashboard.stripe.com/connect.
+
+### Update a rescue page URL
+
+1.  Go to **Larry Impact > Rescues**.
+2.  Click the rescue and open the **Profile** tab.
+3.  Edit the **URL slug** field and click **Update rescue slug**.
+4.  Go to **Larry Impact > Rescue Pages** and click **Sync All Rescue Pages Now**.
+
+### Clean up obsolete products in the Split Configurator
+
+1.  Go to **Larry Impact > Split Configurator**.
+2.  Obsolete products are labeled **(not in WooCommerce)**.
+3.  Click **Hide** on a single row to remove it, or click **Clean up obsolete products** to hide every obsolete product at once.
+
+### Where to find payments
+
+- **Orders:** **WooCommerce > Orders** lists every Merch / Impactlist order.
+- **Financial summary:** **Larry Impact > Reports** shows revenue, payouts, refunds, and liabilities.
+- **Money owed to rescues:** **Larry Impact > Payouts** shows pending batches and lets you pay them.
+- **Stripe / bank status:** **Larry Impact > Rescues > [rescue] > Account** shows whether the rescue has connected a bank account.
+
 ---
 
 ## Important notes
@@ -326,3 +385,37 @@ This page lets you generate or refresh the public profile pages for each approve
 - **Always verify a rescue's payout details before approving a batch.** If a rescue has not connected a payment account, the transfer will fail.
 - **Payouts are not automatic until the payment company connection is fully configured.** A manual approval step is required for each batch.
 - **Keep the ledger export for accounting.** The CSV export in Reports is the official record of sales, payouts, refunds, and adjustments.
+- **Contact the platform manager or developer if you need to change payment keys, currencies, or the minimum payout threshold.** These affect real money and should be handled carefully.
+
+
+---
+
+## Adding a new Shopify SKU and rescue payout
+
+Use this process whenever a new coffee size, grind, roast, or other Shopify product is added.
+
+### Simple version
+
+1. Add the product and SKU in Shopify.
+2. In WordPress, go to **Products > Add new product**.
+3. Enter a clear product name.
+4. Under **Product data > Inventory**, enter the exact same SKU used in Shopify.
+5. Under **Product data > General**, enter the matching Shopify sale price.
+6. Enter the fixed **Rescue payout ($)** for one unit.
+7. Select the **Coffee** category.
+8. Set **Catalog visibility** to **Hidden**. This keeps the internal mapping product out of the public WooCommerce shop.
+9. Set **Stock status** to **Out of stock** so the mapping product cannot be purchased directly through WooCommerce.
+10. Click **Publish**.
+11. Go to **Larry Impact > Split Configurator**.
+12. Find the exact SKU, enter the rescue amount again, and click **Save changes**.
+13. Wait for the green confirmation message, then reload the page and confirm the amount is still correct.
+
+### Advanced explanation
+
+The SKU is the connection between the Shopify order and Larry Impact. It must match exactly, including every letter, number, and hyphen. When Shopify sends an order, Larry Impact reads the SKU, finds the matching internal product, identifies the rescue chosen by the customer, and applies the saved fixed-dollar rescue amount.
+
+The hidden WooCommerce product is an internal mapping record. It must remain **Published** so it appears in Split Configurator, but its catalog visibility stays **Hidden** and its stock status stays **Out of stock** so customers do not see or buy it directly.
+
+The amount entered in Split Configurator is a fixed amount per unit, not a percentage. For example, a rescue amount of **$6.00** on a quantity of two produces **$12.00** in rescue earnings.
+
+Always finish by clicking **Save changes** and waiting for the green success message. Split Configurator saves products in small batches to prevent timeout errors. Unsaved entries are preserved in the browser until the save completes.

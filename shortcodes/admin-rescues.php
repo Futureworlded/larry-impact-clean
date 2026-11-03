@@ -1,6 +1,38 @@
 <?php
 if ( ! defined( 'ABSPATH' ) ) exit;
 
+function li_state_abbr( $state ) {
+    $state = trim( (string) $state );
+    if ( strlen( $state ) === 2 ) return strtoupper( $state );
+    $map = array( 'Alabama'=>'AL','Alaska'=>'AK','Arizona'=>'AZ','Arkansas'=>'AR','California'=>'CA','Colorado'=>'CO','Connecticut'=>'CT','Delaware'=>'DE','Florida'=>'FL','Georgia'=>'GA','Hawaii'=>'HI','Idaho'=>'ID','Illinois'=>'IL','Indiana'=>'IN','Iowa'=>'IA','Kansas'=>'KS','Kentucky'=>'KY','Louisiana'=>'LA','Maine'=>'ME','Maryland'=>'MD','Massachusetts'=>'MA','Michigan'=>'MI','Minnesota'=>'MN','Mississippi'=>'MS','Missouri'=>'MO','Montana'=>'MT','Nebraska'=>'NE','Nevada'=>'NV','New Hampshire'=>'NH','New Jersey'=>'NJ','New Mexico'=>'NM','New York'=>'NY','North Carolina'=>'NC','North Dakota'=>'ND','Ohio'=>'OH','Oklahoma'=>'OK','Oregon'=>'OR','Pennsylvania'=>'PA','Rhode Island'=>'RI','South Carolina'=>'SC','South Dakota'=>'SD','Tennessee'=>'TN','Texas'=>'TX','Utah'=>'UT','Vermont'=>'VT','Virginia'=>'VA','Washington'=>'WA','West Virginia'=>'WV','Wisconsin'=>'WI','Wyoming'=>'WY' );
+    foreach ( $map as $name => $abbr ) if ( strcasecmp( $state, $name ) === 0 ) return $abbr;
+    return strtoupper( $state );
+}
+
+function li_rescue_shipping_data( $rescue ) {
+    $rid = $rescue['id'] ?? '';
+    $saved = $rid ? get_option( 'li_rescue_shipping_' . $rid, array() ) : array();
+    if ( ! is_array( $saved ) ) $saved = array();
+    $raw = trim( (string) ( $rescue['address'] ?? '' ) );
+    $city = trim( (string) ( $saved['city'] ?? ( $rescue['city'] ?? '' ) ) );
+    $state_raw = trim( (string) ( $saved['state'] ?? ( $rescue['state'] ?? '' ) ) );
+    $state = li_state_abbr( $state_raw );
+    $zip = trim( (string) ( $saved['zip'] ?? '' ) );
+    if ( ! $zip && preg_match( '/\b(\d{5}(?:-\d{4})?)\b/', $raw, $m ) ) $zip = $m[1];
+    $address1 = trim( (string) ( $saved['address1'] ?? '' ) );
+    $address2 = trim( (string) ( $saved['address2'] ?? '' ) );
+    if ( ! $address1 && $raw ) {
+        $address1 = preg_replace( '/[\s,]*\b\d{5}(?:-\d{4})?\b\s*$/', '', $raw );
+        $states = array_filter( array( $state_raw, $state ) );
+        foreach ( $states as $s ) {
+            if ( $city ) $address1 = preg_replace( '/[\s,]+' . preg_quote( $city, '/' ) . '[\s,]+' . preg_quote( $s, '/' ) . '\s*$/i', '', $address1 );
+        }
+        $address1 = trim( $address1, " ,\t\n\r\0\x0B" );
+    }
+    return array( 'address1'=>$address1, 'address2'=>$address2, 'city'=>$city, 'state'=>$state, 'zip'=>$zip );
+}
+
+
 // handle preview profile save
 function li_handle_preview_save() {
     if ( ! isset( $_POST['li_preview_nonce'] ) ) return '';
@@ -8,6 +40,15 @@ function li_handle_preview_save() {
     if ( ! current_user_can( 'manage_options' ) ) return '';
     $rid = sanitize_text_field( $_POST['rescue_id'] ?? '' );
     if ( ! $rid ) return '';
+
+    $shipping = array(
+        'address1' => sanitize_text_field( $_POST['shipping_address1'] ?? '' ),
+        'address2' => sanitize_text_field( $_POST['shipping_address2'] ?? '' ),
+        'city'     => sanitize_text_field( $_POST['shipping_city'] ?? '' ),
+        'state'    => li_state_abbr( sanitize_text_field( $_POST['shipping_state'] ?? '' ) ),
+        'zip'      => sanitize_text_field( $_POST['shipping_zip'] ?? '' ),
+    );
+    update_option( 'li_rescue_shipping_' . $rid, $shipping, false );
     $data = array(
         'name'            => sanitize_text_field( $_POST['rescue_name'] ?? '' ),
         'email'           => sanitize_email( $_POST['rescue_email'] ?? '' ),
@@ -23,6 +64,9 @@ function li_handle_preview_save() {
         'video_url'       => esc_url_raw( $_POST['rescue_video_url'] ?? '' ),
         'ein'             => sanitize_text_field( $_POST['rescue_ein'] ?? '' ),
     );
+    if ( ! empty( $_POST['rescue_slug'] ) ) {
+        $data['slug'] = sanitize_title( $_POST['rescue_slug'] );
+    }
     $r = li_db_patch( 'rescues?id=eq.' . urlencode( $rid ), $data );
     if ( is_wp_error( $r ) || wp_remote_retrieve_response_code( $r ) >= 400 ) {
         return '<div class="li-msg-err">Could not save changes. Please try again.</div>';
@@ -112,7 +156,11 @@ function li_page_rescue_detail( $view_id ) {
 
     ob_start();
     echo $save_msg;
-    if ( isset( $_GET['login_msg'] ) ) { echo '<div class="li-msg-ok">' . esc_html( urldecode( $_GET['login_msg'] ) ) . '</div>'; }
+    if ( isset( $_GET['login_msg'] ) ) {
+        $login_msg = urldecode( $_GET['login_msg'] );
+        $msg_class = ( stripos( $login_msg, 'error' ) !== false || stripos( $login_msg, 'failed' ) !== false ) ? 'li-msg-err' : 'li-msg-ok';
+        echo '<div class="' . esc_attr( $msg_class ) . '">' . esc_html( $login_msg ) . '</div>';
+    }
     echo '<a href="' . admin_url( 'admin.php?page=li-rescues' ) . '" class="li-back">Back to all rescues</a>';
     echo '<div class="li-rescue-header">';
     echo '<div><div class="li-rescue-name">' . esc_html( $rescue['name'] ) . '</div>';
@@ -145,7 +193,9 @@ function li_page_rescue_detail( $view_id ) {
         echo '<option value="' . $s . '"' . selected( $rescue['status'] ?? '', $s, false ) . '>' . ucfirst( $s ) . '</option>';
     }
     echo '</select></div></div>';
-    echo '<div class="li-row"><div class="li-field"><label class="li-label">City</label>';
+    echo '<div class="li-row"><div class="li-field"><label class="li-label">URL slug</label>';
+    echo '<input class="li-input" type="text" name="rescue_slug" value="' . esc_attr( $rescue['slug'] ?? '' ) . '" /></div>';
+    echo '<div class="li-field"><label class="li-label">City</label>';
     echo '<input class="li-input" type="text" name="rescue_city" value="' . esc_attr( $rescue['city'] ?? '' ) . '" /></div>';
     echo '<div class="li-field"><label class="li-label">State</label>';
     echo '<input class="li-input" type="text" name="rescue_state" value="' . esc_attr( $rescue['state'] ?? '' ) . '" /></div></div>';
@@ -166,6 +216,15 @@ function li_page_rescue_detail( $view_id ) {
     echo '<input class="li-input" type="number" name="rescue_animals_rescued" value="' . esc_attr( $rescue['animals_rescued'] ?? 0 ) . '" /></div>';
     echo '<div class="li-field"><label class="li-label">EIN / Tax ID</label>';
     echo '<input class="li-input" type="text" name="rescue_ein" value="' . esc_attr( $rescue['ein'] ?? '' ) . '" /></div></div></div>';
+
+    $shipping = li_rescue_shipping_data( $rescue );
+    echo '<div class="li-card"><div class="li-card-title">Verified shipping address</div>';
+    echo '<p style="font-size:12px;color:#6b6560;margin-top:0;">Used automatically when a customer chooses Ship directly to my selected rescue. A complete ZIP code is required.</p>';
+    echo '<div class="li-row"><div class="li-field"><label class="li-label">Street address</label><input class="li-input" type="text" name="shipping_address1" value="' . esc_attr( $shipping['address1'] ) . '" /></div>';
+    echo '<div class="li-field"><label class="li-label">Apt / Suite / Unit</label><input class="li-input" type="text" name="shipping_address2" value="' . esc_attr( $shipping['address2'] ) . '" /></div></div>';
+    echo '<div class="li-row"><div class="li-field"><label class="li-label">City</label><input class="li-input" type="text" name="shipping_city" value="' . esc_attr( $shipping['city'] ) . '" /></div>';
+    echo '<div class="li-field"><label class="li-label">State</label><input class="li-input" type="text" name="shipping_state" value="' . esc_attr( $shipping['state'] ) . '" /></div>';
+    echo '<div class="li-field"><label class="li-label">ZIP code</label><input class="li-input" type="text" name="shipping_zip" value="' . esc_attr( $shipping['zip'] ) . '" /></div></div></div>';
     echo '<div class="li-card"><div class="li-card-title">Video</div>';
     echo '<div class="li-row li-row-full"><div class="li-field"><label class="li-label">YouTube or Vimeo URL</label>';
     echo '<input class="li-input" type="url" name="rescue_video_url" placeholder="https://youtube.com/watch?v=..." value="' . esc_attr( $rescue['video_url'] ?? '' ) . '" /></div></div></div>';
@@ -234,6 +293,29 @@ function li_page_rescue_detail( $view_id ) {
         echo '<p style="font-size:12px;color:#a89880;margin-top:8px;"><a href="' . esc_url( $w9_url ) . '" target="_blank" rel="noopener noreferrer">View W-9</a></p>';
     } else {
         echo '<div class="li-badge li-badge-pending">&#9888; No W-9 uploaded</div>';
+        echo '<p style="font-size:13px;color:#6b6560;margin:12px 0;">Email the rescue a secure reminder to sign in and upload its W-9.</p>';
+        echo '<form method="post" action="' . esc_url( admin_url( 'admin-post.php' ) ) . '">';
+        wp_nonce_field( 'li_resend_w9' );
+        echo '<input type="hidden" name="action" value="li_resend_w9" />';
+        echo '<input type="hidden" name="rescue_id" value="' . esc_attr( $view_id ) . '" />';
+        echo '<button type="submit" class="li-btn">Send W-9 reminder</button>';
+        echo '</form>';
+    }
+    echo '</div>';
+    echo '<div class="li-card"><div class="li-card-title">Stripe onboarding</div>';
+    if ( $stripe_verified ) {
+        echo '<div class="li-badge li-badge-approved">&#10003; Bank account verified</div>';
+    } elseif ( $stripe_id ) {
+        echo '<div class="li-badge li-badge-pending">&#9888; Onboarding incomplete</div>';
+        echo '<p style="font-size:13px;color:#6b6560;margin:12px 0;">Send the rescue a new Stripe onboarding link by email.</p>';
+        echo '<form method="post" action="' . esc_url( admin_url( 'admin-post.php' ) ) . '">';
+        wp_nonce_field( 'li_resend_stripe' );
+        echo '<input type="hidden" name="action" value="li_resend_stripe" />';
+        echo '<input type="hidden" name="rescue_id" value="' . esc_attr( $view_id ) . '" />';
+        echo '<button type="submit" class="li-btn">Send onboarding email</button>';
+        echo '</form>';
+    } else {
+        echo '<div class="li-badge li-badge-pending">&#9888; Bank setup not started</div><p style="font-size:13px;color:#6b6560;margin:12px 0;">Create a secure Stripe onboarding session and email the rescue its bank-setup link.</p><form method="post" action="' . esc_url( admin_url( 'admin-post.php' ) ) . '">'; wp_nonce_field( 'li_resend_stripe' ); echo '<input type="hidden" name="action" value="li_resend_stripe" /><input type="hidden" name="rescue_id" value="' . esc_attr( $view_id ) . '" /><button type="submit" class="li-btn">Send bank setup email</button></form>';
     }
     echo '</div>';
     $user = get_user_by( 'email', $rescue['email'] ?? '' );
@@ -339,7 +421,9 @@ function li_page_rescue_detail( $view_id ) {
         try{
             var res=await fetch(LI_AJAX,{method:"POST",body:fd});
             var data=await res.json();
-            if(data.success&&data.data.url){
+            if(!data.success){throw new Error(data.data&&data.data.message?data.data.message:"Upload failed.");}
+            if(!data.data||!data.data.url){throw new Error("Upload failed.");}
+
                 var el=document.getElementById(iid);
                 if(el.tagName==="IMG"){el.src=data.data.url;}else{var img=document.createElement("img");img.src=data.data.url;img.className="li-media-thumb";img.id=iid;el.parentNode.replaceChild(img,el);}
                 var pfd=new FormData();pfd.append("action","li_update_rescue_field");pfd.append("li_nonce",LI_NONCE);pfd.append("rescue_id",rescueId);pfd.append("field",field);pfd.append("value",data.data.url);
@@ -347,8 +431,7 @@ function li_page_rescue_detail( $view_id ) {
                 if(!pdata.success)throw new Error(pdata.data&&pdata.data.message?pdata.data.message:"Save failed");
                 document.getElementById(sid).textContent="Uploaded.";
                 setTimeout(function(){document.getElementById(sid).textContent="";},2000);
-            }
-        }catch(e){document.getElementById(sid).textContent="Upload failed.";}
+        }catch(e){document.getElementById(sid).textContent=e.message||"Upload failed.";}
     }
     </script>';
     li_admin_wrap( 'Rescues', ob_get_clean() );
@@ -367,4 +450,138 @@ function li_handle_create_rescue_login() {
     $result = li_create_rescue_wp_user( $rescue['name'] ?? '', $rescue['email'] ?? '', true );
     wp_redirect( admin_url( 'admin.php?page=li-rescues&rescue_id=' . $rid . '&login_msg=' . urlencode( $result['message'] ?? 'Done' ) ) );
     exit;
+}
+
+
+add_action( 'admin_post_li_resend_w9', 'li_handle_resend_w9' );
+function li_handle_resend_w9() {
+    check_admin_referer( 'li_resend_w9' );
+    if ( ! current_user_can( 'manage_options' ) ) { wp_die( 'Unauthorized' ); }
+    $rid = sanitize_text_field( $_POST['rescue_id'] ?? '' );
+    $data = li_db_get( 'rescues?id=eq.' . urlencode( $rid ) . '&select=*' );
+    $rescue = ! empty( $data ) ? $data[0] : null;
+    if ( ! $rescue ) { wp_redirect( admin_url( 'admin.php?page=li-rescues' ) ); exit; }
+
+    $to = sanitize_email( $rescue['email'] ?? '' );
+    $name = sanitize_text_field( $rescue['name'] ?? 'Rescue Partner' );
+    $setup_url = home_url( '/dashboard/my-account/' );
+    $subject = 'Action required: upload your Larry Impact W-9';
+    $body = "Hi {$name},
+
+Our records show that your W-9 tax form has not been uploaded yet. Please sign in to your Larry Impact rescue dashboard and open Setup / My Account to download, sign, and securely upload your W-9:
+
+{$setup_url}
+
+Payouts cannot be issued until your W-9 and bank setup are complete. If you have already uploaded it, no further action is needed.
+
+The Larry Impact Team";
+    $sent = $to ? wp_mail( $to, $subject, $body ) : false;
+    $msg = $sent ? 'W-9 reminder sent to ' . $to . '.' : 'W-9 reminder could not be sent. Please verify the rescue email address and WordPress mail configuration.';
+    wp_redirect( admin_url( 'admin.php?page=li-rescues&rescue_id=' . $rid . '&login_msg=' . urlencode( $msg ) ) );
+    exit;
+}
+
+add_action( 'admin_post_li_resend_stripe', 'li_handle_resend_stripe' );
+function li_handle_resend_stripe() {
+    check_admin_referer( 'li_resend_stripe' );
+    if ( ! current_user_can( 'manage_options' ) ) { wp_die( 'Unauthorized' ); }
+    $rid = sanitize_text_field( $_POST['rescue_id'] ?? '' );
+    $data = li_db_get( 'rescues?id=eq.' . urlencode( $rid ) . '&select=*' );
+    $rescue = ! empty( $data ) ? $data[0] : null;
+    if ( ! $rescue ) { wp_redirect( admin_url( 'admin.php?page=li-rescues' ) ); exit; }
+
+    $stripe_id = $rescue['stripe_account_id'] ?? '';
+    $stripe_sk = li_stripe_sk();
+    $msg       = 'Could not generate a Stripe onboarding link.';
+
+    if ( $stripe_id ) {
+        $sc = wp_remote_get( 'https://api.stripe.com/v1/accounts/' . $stripe_id, array( 'headers' => array( 'Authorization' => 'Bearer ' . $stripe_sk ) ) );
+        if ( is_wp_error( $sc ) || wp_remote_retrieve_response_code( $sc ) >= 400 ) {
+            $body = is_wp_error( $sc ) ? $sc->get_error_message() : wp_remote_retrieve_body( $sc );
+            $sd   = json_decode( $body, true );
+            $msg  = 'Stripe account lookup failed: ' . ( $sd['error']['message'] ?? $body );
+            $stripe_id = '';
+        } else {
+            $sd = json_decode( wp_remote_retrieve_body( $sc ), true );
+            if ( ! empty( $sd['error'] ) ) {
+                $msg = 'Stripe error: ' . esc_html( $sd['error']['message'] ?? $sd['error'] );
+                $stripe_id = '';
+            }
+        }
+    }
+
+    if ( ! $stripe_id ) {
+        $nr = wp_remote_post( 'https://api.stripe.com/v1/accounts', array(
+            'headers' => array( 'Authorization' => 'Bearer ' . $stripe_sk, 'Content-Type' => 'application/x-www-form-urlencoded' ),
+            'body'    => array(
+                'type'                               => 'express',
+                'country'                            => 'US',
+                'email'                              => $rescue['email'] ?? '',
+                'business_type'                      => 'non_profit',
+                'business_profile[name]'             => $rescue['name'] ?? '',
+                'capabilities[transfers][requested]' => 'true',
+            ),
+        ) );
+        if ( is_wp_error( $nr ) ) {
+            $msg = 'Stripe request failed: ' . $nr->get_error_message();
+        } else {
+            $na = json_decode( wp_remote_retrieve_body( $nr ), true );
+            if ( ! empty( $na['id'] ) ) {
+                $stripe_id = $na['id'];
+                li_db_patch( 'rescues?id=eq.' . urlencode( $rid ), array( 'stripe_account_id' => $stripe_id ) );
+            } elseif ( ! empty( $na['error'] ) ) {
+                $msg = 'Stripe error: ' . esc_html( $na['error']['message'] ?? $na['error'] );
+            } else {
+                $msg = 'Stripe returned an empty response.';
+            }
+        }
+    }
+
+    if ( $stripe_id ) {
+        $return_url  = home_url( '/dashboard/my-account/?stripe_connect=success' );
+        $refresh_url = home_url( '/dashboard/my-account/?stripe_connect=refresh' );
+        $lr = wp_remote_post( 'https://api.stripe.com/v1/account_links', array(
+            'headers' => array( 'Authorization' => 'Bearer ' . $stripe_sk, 'Content-Type' => 'application/x-www-form-urlencoded' ),
+            'body'    => array( 'account' => $stripe_id, 'refresh_url' => $refresh_url, 'return_url' => $return_url, 'type' => 'account_onboarding' ),
+        ) );
+        if ( is_wp_error( $lr ) ) {
+            $msg = 'Stripe link request failed: ' . $lr->get_error_message();
+        } else {
+            $ll = json_decode( wp_remote_retrieve_body( $lr ), true );
+            if ( ! empty( $ll['url'] ) ) {
+                $to   = $rescue['email'] ?? '';
+                $name = $rescue['name'] ?? '';
+                $subject = 'Complete your Larry Impact Stripe bank setup';
+                $body    = "Hi {$name},\n\nPlease click the link below to connect your bank account to Larry Impact for payouts:\n\n" . $ll['url'] . "\n\nIf you have already completed this, you can ignore this email.\n\nThe Larry Impact Team";
+                $sent = wp_mail( $to, $subject, $body );
+                $msg = $sent ? 'Onboarding email sent to ' . $to . '.' : 'Generated onboarding link but email could not be sent. Link: ' . $ll['url'];
+            } elseif ( ! empty( $ll['error'] ) ) {
+                $msg = 'Stripe link error: ' . esc_html( $ll['error']['message'] ?? $ll['error'] );
+            } else {
+                $msg = 'Stripe returned an empty response for the onboarding link.';
+            }
+        }
+    }
+
+    wp_redirect( admin_url( 'admin.php?page=li-rescues&rescue_id=' . $rid . '&login_msg=' . urlencode( $msg ) ) );
+    exit;
+}
+
+add_action( 'rest_api_init', function() {
+    register_rest_route( 'larry-impact/v1', '/rescue-shipping/(?P<slug>[a-z0-9-]+)', array(
+        'methods' => 'GET',
+        'callback' => 'li_rest_rescue_shipping',
+        'permission_callback' => '__return_true',
+    ) );
+} );
+function li_rest_rescue_shipping( $request ) {
+    $slug = sanitize_title( $request['slug'] ?? '' );
+    $rows = li_db_get( 'rescues?slug=eq.' . urlencode( $slug ) . '&select=*' );
+    $rescue = ! empty( $rows ) ? $rows[0] : null;
+    if ( ! $rescue || ! in_array( $rescue['status'] ?? '', array( 'approved', 'active' ), true ) ) return new WP_Error( 'not_found', 'Rescue not available.', array( 'status'=>404 ) );
+    $s = li_rescue_shipping_data( $rescue );
+    if ( empty( $s['address1'] ) || empty( $s['city'] ) || empty( $s['state'] ) || ! preg_match( '/^\d{5}(?:-\d{4})?$/', $s['zip'] ) ) return new WP_Error( 'address_incomplete', 'Rescue shipping address is incomplete.', array( 'status'=>409 ) );
+    $response = rest_ensure_response( array( 'name'=>(string)($rescue['name']??''), 'address1'=>$s['address1'], 'address2'=>$s['address2'], 'city'=>$s['city'], 'state'=>$s['state'], 'zip'=>$s['zip'] ) );
+    $response->header( 'Cache-Control', 'no-store, max-age=0' );
+    return $response;
 }

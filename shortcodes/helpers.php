@@ -30,11 +30,14 @@ function li_db_get( $endpoint ) {
         ),
     ) );
     if ( is_wp_error( $response ) ) return array();
-    return json_decode( wp_remote_retrieve_body( $response ), true ) ?: array();
+    $data = json_decode( wp_remote_retrieve_body( $response ), true ) ?: array();
+    // Clean one layer of WordPress escaping from text stored by older forms.
+    return wp_unslash( $data );
 }
 
 function li_db_patch( $endpoint, $data ) {
     $key = li_service_key();
+    $data = wp_unslash( $data );
     return wp_remote_request( LI_DB_URL . '/rest/v1/' . $endpoint, array(
         'method'  => 'PATCH',
         'headers' => array(
@@ -49,6 +52,7 @@ function li_db_patch( $endpoint, $data ) {
 
 function li_db_post( $endpoint, $data ) {
     $key = li_service_key();
+    $data = wp_unslash( $data );
     return wp_remote_post( LI_DB_URL . '/rest/v1/' . $endpoint, array(
         'headers' => array(
             'apikey'        => $key,
@@ -286,7 +290,7 @@ function li_create_rescue_wp_user( $name, $email, $send_email = true ) {
         if ( ! in_array( 'administrator', $user->roles, true ) ) {
             wp_update_user( array( 'ID' => $user->ID, 'role' => 'rescue_partner' ) );
         }
-        return array( 'user_id' => $user->ID, 'password' => '', 'message' => 'Existing user updated.' );
+        return array( 'user_id' => $user->ID, 'password' => '', 'username' => $user->user_login, 'email_sent' => false, 'message' => 'Existing user updated.' );
     }
     $password = wp_generate_password( 12, true );
     $username = sanitize_user( $name );
@@ -299,17 +303,53 @@ function li_create_rescue_wp_user( $name, $email, $send_email = true ) {
     $user_id = wp_create_user( $username, $password, $email );
     if ( is_wp_error( $user_id ) ) {
         li_log( 'Failed to create WP user for rescue email ' . $email . ': ' . $user_id->get_error_message() );
-        return array( 'user_id' => 0, 'password' => '', 'message' => $user_id->get_error_message() );
+        return array( 'user_id' => 0, 'password' => '', 'username' => '', 'email_sent' => false, 'message' => $user_id->get_error_message() );
     }
     $user = get_user_by( 'id', $user_id );
     if ( $user && ! in_array( 'administrator', $user->roles, true ) ) {
         wp_update_user( array( 'ID' => $user->ID, 'role' => 'rescue_partner' ) );
     }
+    $email_sent = false;
     if ( $send_email && $password ) {
         $login_url = home_url( '/rescue-login/' );
-        wp_mail( $email, 'Your Larry Impact rescue account is approved', "Hi {$name},\n\nYour rescue application has been approved. You can log in with the following credentials:\n\nUsername: {$username}\nPassword: {$password}\n\nLogin: {$login_url}\n\nPlease change your password after logging in.\n\nThe Larry Impact Team" );
+        $setup_url = home_url( '/dashboard/my-account/' );
+        $subject   = 'Your Larry Impact rescue account is approved - action required';
+        $message   = "Hi {$name},
+
+"
+            . "Your rescue application has been approved. Welcome to Larry Impact!
+
+"
+            . "Login details:
+"
+            . "Username: {$username}
+"
+            . "Temporary password: {$password}
+"
+            . "Login: {$login_url}
+
+"
+            . "Please complete your payout setup:
+"
+            . "1. Log in and open Setup / My Account.
+"
+            . "2. Upload your rescue's W-9 tax form.
+"
+            . "3. Click Connect bank account and complete the secure Stripe setup.
+
+"
+            . "Setup page: {$setup_url}
+
+"
+            . "Payouts cannot be issued until your W-9 and bank setup are complete.
+"
+            . "Please also change your temporary password after logging in.
+
+"
+            . "The Larry Impact Team";
+        $email_sent = wp_mail( $email, $subject, $message );
     }
-    return array( 'user_id' => $user_id, 'password' => $password, 'message' => 'User created.' );
+    return array( 'user_id' => $user_id, 'password' => $password, 'username' => $username, 'email_sent' => $email_sent, 'message' => 'User created.' );
 }
 
 function li_rescue_merge_w9( $rescue ) {
@@ -480,43 +520,219 @@ function li_get_split_config( $product_id ) {
     return ! empty( $data ) ? $data[0] : null;
 }
 
-function li_ensure_split_config( $product_id, $price_cents = 0, $cost_cents = 0 ) {
-    $price = max( 1, intval( $price_cents ) );
-    $cost  = max( 0, intval( $cost_cents ) );
-    $cost_percent = ( $cost / $price ) * 100;
-    $net_percent  = max( 0, 100 - $cost_percent );
+function li_get_product_rescue_cents( $product ) {
+    if ( empty( $product['sku'] ) ) {
+        return 0;
+    }
+    if ( ! function_exists( 'wc_get_product_id_by_sku' ) ) {
+        return 0;
+    }
+    $wp_id = wc_get_product_id_by_sku( $product['sku'] );
+    if ( ! $wp_id ) {
+        return 0;
+    }
+    $meta = get_post_meta( $wp_id, '_li_rescue_cents', true );
+    if ( '' === $meta ) {
+        return 0;
+    }
+    return max( 0, intval( $meta ) );
+}
 
-    $rp = 0;
-    $lp = 0;
+function li_get_all_wc_products_by_sku() {
+    $map = array();
+    if ( ! function_exists( 'wc_get_product' ) ) {
+        return $map;
+    }
+    $ids = get_posts(
+        array(
+            'post_type'      => array( 'product', 'product_variation' ),
+            'post_status'    => 'publish',
+            'posts_per_page' => -1,
+            'fields'         => 'ids',
+        )
+    );
+    if ( ! is_array( $ids ) ) {
+        return $map;
+    }
+    foreach ( $ids as $id ) {
+        $product = wc_get_product( $id );
+        if ( ! $product ) {
+            continue;
+        }
+        $sku = $product->get_sku();
+        if ( $sku ) {
+            $map[ $sku ] = $product;
+        }
+    }
+    return $map;
+}
 
+function li_wc_product_display_name( $product ) {
+    if ( ! is_object( $product ) || ! method_exists( $product, 'get_name' ) ) {
+        return '';
+    }
+    if ( $product->is_type( 'variation' ) ) {
+        $parent_id = $product->get_parent_id();
+        $base      = $product->get_name();
+        if ( $parent_id && function_exists( 'wc_get_product' ) ) {
+            $parent = wc_get_product( $parent_id );
+            if ( $parent ) {
+                $base = $parent->get_name();
+            }
+        }
+        $attrs = function_exists( 'wc_get_formatted_variation' ) ? wc_get_formatted_variation( $product, true ) : '';
+        return $attrs ? $base . ' - ' . $attrs : $base;
+    }
+    return $product->get_name();
+}
+
+function li_deactivate_orphan_products() {
+    if ( ! function_exists( 'wc_get_product' ) ) {
+        return 0;
+    }
+    global $wpdb;
+    $wc_skus = $wpdb->get_col(
+        "SELECT DISTINCT pm.meta_value FROM {$wpdb->postmeta} pm
+         INNER JOIN {$wpdb->posts} p ON p.ID = pm.post_id
+         WHERE pm.meta_key='_sku' AND pm.meta_value <> ''
+         AND p.post_status='publish'
+         AND p.post_type IN ('product','product_variation')"
+    );
+    $wc_skus = is_array( $wc_skus ) ? $wc_skus : array();
+    $deactivated = 0;
+    $limit  = 1000;
+    $offset = 0;
+    do {
+        $products = li_db_get( 'products?select=id,sku,active&order=id.asc&limit=' . $limit . '&offset=' . $offset );
+        if ( ! is_array( $products ) || empty( $products ) ) {
+            break;
+        }
+        foreach ( $products as $p ) {
+            $sku = $p['sku'] ?? '';
+            if ( ! $sku ) {
+                continue;
+            }
+            if ( isset( $p['active'] ) && $p['active'] === false ) {
+                continue;
+            }
+            if ( in_array( $sku, $wc_skus, true ) ) {
+                continue;
+            }
+            $r = li_db_patch( 'products?id=eq.' . urlencode( $p['id'] ), array( 'active' => false ) );
+            if ( ! is_wp_error( $r ) && wp_remote_retrieve_response_code( $r ) < 400 ) {
+                $deactivated++;
+            }
+        }
+        $offset += $limit;
+    } while ( count( $products ) === $limit );
+    return $deactivated;
+}
+
+function li_get_rescue_cents_default( $product, $default_split = 0 ) {
+    $price = max( 1, intval( $product['price_cents'] ?? 0 ) );
+    $cost  = max( 0, intval( $product['cost_cents'] ?? 0 ) );
+    if ( $default_split <= 0 ) {
+        $default_split = floatval( get_option( 'li_default_split', 55 ) );
+    }
+    if ( $default_split <= 0 ) {
+        $default_split = 55;
+    }
+    $cost_percent  = ( $cost / $price ) * 100;
+    $net_percent   = max( 0, 100 - $cost_percent );
+    $rescue_gross  = ( $net_percent > 0 ) ? ( $default_split * $net_percent / 100 ) : 0;
+    return max( 0, intval( round( $price * $rescue_gross / 100 ) ) );
+}
+
+function li_migrate_rescue_cents_from_split_config() {
+    if ( get_option( 'li_rescue_cents_migrated' ) ) {
+        return;
+    }
+    $products = li_db_get( 'products?select=*' );
+    if ( ! is_array( $products ) ) {
+        $products = array();
+    }
+    foreach ( $products as $p ) {
+        $product_id   = $p['id'] ?? '';
+        $price_cents  = max( 1, intval( $p['price_cents'] ?? 0 ) );
+        $rescue_cents = 0;
+        $sp = li_get_split_config( $product_id );
+        if ( $sp && floatval( $sp['rescue_percent'] ?? 0 ) > 0 ) {
+            $rescue_cents = intval( round( $price_cents * floatval( $sp['rescue_percent'] ) / 100 ) );
+        }
+        if ( $rescue_cents > 0 && ! empty( $p['sku'] ) && function_exists( 'wc_get_product_id_by_sku' ) ) {
+            $wp_id = wc_get_product_id_by_sku( $p['sku'] );
+            if ( $wp_id ) {
+                update_post_meta( $wp_id, '_li_rescue_cents', $rescue_cents );
+            }
+        }
+    }
+    update_option( 'li_rescue_cents_migrated', 1 );
+}
+
+function li_ensure_split_config( $product_id, $price_cents = 0, $cost_cents = 0, $force_recalculate = false ) {
+    // Routine product synchronization must not overwrite an amount entered by
+    // an administrator. Only the explicit Reset all to defaults action forces
+    // recalculation of an existing split.
+    $existing = li_get_split_config( $product_id );
+    if ( $existing && ! $force_recalculate ) {
+        return $existing;
+    }
     $product = li_get_product_by_id( $product_id );
-    if ( $product && ! empty( $product['sku'] ) ) {
+    $price   = max( 1, intval( $price_cents ? $price_cents : ( $product['price_cents'] ?? 0 ) ) );
+
+    if ( $product && ! empty( $product['sku'] ) && function_exists( 'wc_get_product_id_by_sku' ) ) {
         $wp_id = wc_get_product_id_by_sku( $product['sku'] );
         if ( $wp_id ) {
-            $rescue_cents_meta = get_post_meta( $wp_id, '_li_rescue_cents', true );
-            $larry_cents_meta  = get_post_meta( $wp_id, '_li_larry_cents', true );
-            if ( '' !== $rescue_cents_meta && '' !== $larry_cents_meta ) {
-                $rp = ( $price > 0 ) ? round( floatval( $rescue_cents_meta ) / $price * 100, 4 ) : 0;
-                $lp = ( $price > 0 ) ? round( floatval( $larry_cents_meta ) / $price * 100, 4 ) : 0;
+            $wc_product = wc_get_product( $wp_id );
+            if ( $wc_product ) {
+                $wc_price = max( 1, intval( round( floatval( $wc_product->get_price() ) * 100 ) ) );
+                if ( $wc_price > 0 && abs( $wc_price - $price ) > 0 ) {
+                    $price = $wc_price;
+                    li_db_patch( 'products?id=eq.' . urlencode( $product_id ), array( 'price_cents' => $price ) );
+                }
             }
         }
     }
 
-    if ( $rp <= 0 && $lp <= 0 ) {
-        $rescue_net = floatval( get_option( 'li_default_split', 55 ) );
-        if ( $rescue_net <= 0 ) {
-            $rescue_net = 55;
+    if ( $product ) {
+        $product['price_cents'] = $price;
+    }
+
+    $cost    = max( 0, intval( $cost_cents ? $cost_cents : ( $product['cost_cents'] ?? 0 ) ) );
+    $cost_percent = ( $cost / $price ) * 100;
+    $net_percent  = max( 0, 100 - $cost_percent );
+
+    $rescue_cents = 0;
+    if ( $product && ! $force_recalculate ) {
+        $rescue_cents = li_get_product_rescue_cents( $product );
+        if ( $rescue_cents <= 0 ) {
+            $rescue_cents = li_get_rescue_cents_default( $product );
+            if ( $rescue_cents > 0 && ! empty( $product['sku'] ) && function_exists( 'wc_get_product_id_by_sku' ) ) {
+                $wp_id = wc_get_product_id_by_sku( $product['sku'] );
+                if ( $wp_id ) {
+                    update_post_meta( $wp_id, '_li_rescue_cents', $rescue_cents );
+                }
+            }
         }
-        $rp = ( $net_percent > 0 ) ? ( $rescue_net * $net_percent / 100 ) : 0;
-        $lp = max( 0, $net_percent - $rp );
+    }
+
+    if ( $rescue_cents > 0 && ! $force_recalculate ) {
+        $rescue_percent = ( $rescue_cents / $price ) * 100;
+        $larry_percent  = max( 0, $net_percent - $rescue_percent );
+    } else {
+        $default_split = floatval( get_option( 'li_default_split', 55 ) );
+        if ( $default_split <= 0 ) {
+            $default_split = 55;
+        }
+        $rescue_percent = ( $net_percent > 0 ) ? ( $default_split * $net_percent / 100 ) : 0;
+        $larry_percent  = max( 0, $net_percent - $rescue_percent );
     }
 
     $payload = array(
-        'rescue_percent' => round( $rp, 4 ),
-        'larry_percent'  => round( $lp, 4 ),
+        'rescue_percent' => round( $rescue_percent, 4 ),
+        'larry_percent'  => round( $larry_percent, 4 ),
     );
 
-    $existing = li_get_split_config( $product_id );
     if ( $existing ) {
         $r = li_db_patch( 'split_config?id=eq.' . urlencode( $existing['id'] ), $payload );
     } else {
@@ -527,9 +743,16 @@ function li_ensure_split_config( $product_id, $price_cents = 0, $cost_cents = 0 
         li_log( 'Failed to update split_config for product ' . $product_id . ': ' . wp_remote_retrieve_response_code( $r ) . ' ' . wp_remote_retrieve_body( $r ) );
         return li_get_split_config( $product_id );
     }
+    if ( $force_recalculate && $product && ! empty( $product['sku'] ) && function_exists( 'wc_get_product_id_by_sku' ) ) {
+        $wp_id = wc_get_product_id_by_sku( $product['sku'] );
+        if ( $wp_id ) {
+            $default_cents = intval( round( $price * $rescue_percent / 100 ) );
+            update_post_meta( $wp_id, '_li_rescue_cents', $default_cents );
+        }
+    }
     $latest = li_get_split_version( $product_id );
-    if ( ! $latest || abs( floatval( $latest['rescue_percent'] ) - round( $rp, 4 ) ) > 0.0001 || abs( floatval( $latest['larry_percent'] ) - round( $lp, 4 ) ) > 0.0001 || abs( floatval( $latest['cost_percent'] ) - round( $cost_percent, 4 ) ) > 0.0001 ) {
-        li_create_split_version( $product_id, round( $rp, 4 ), round( $lp, 4 ), round( $cost_percent, 4 ) );
+    if ( ! $latest || abs( floatval( $latest['rescue_percent'] ) - round( $rescue_percent, 4 ) ) > 0.0001 || abs( floatval( $latest['larry_percent'] ) - round( $larry_percent, 4 ) ) > 0.0001 || abs( floatval( $latest['cost_percent'] ) - round( $cost_percent, 4 ) ) > 0.0001 ) {
+        li_create_split_version( $product_id, round( $rescue_percent, 4 ), round( $larry_percent, 4 ), round( $cost_percent, 4 ) );
     }
     return li_get_split_config( $product_id );
 }
@@ -552,11 +775,27 @@ function li_get_rescue_by_name( $name ) {
     return ! empty( $data ) ? $data[0] : null;
 }
 
-function li_calculate_splits( $product, $sale_cents, $rescue = null ) {
+function li_calculate_splits( $product, $sale_cents, $rescue = null, $quantity = 1 ) {
     $price = max( 1, intval( $product['price_cents'] ?? 1 ) );
     $cost  = max( 0, intval( $product['cost_cents'] ?? 0 ) );
     $cost_percent = ( $cost / $price ) * 100;
     $net_percent  = max( 0, 100 - $cost_percent );
+
+    $rescue_cents_per_unit = li_get_product_rescue_cents( $product );
+    if ( $rescue_cents_per_unit > 0 ) {
+        $quantity       = max( 1, intval( $quantity ) );
+        $total_rescue   = min( $sale_cents, $rescue_cents_per_unit * $quantity );
+        $total_larry    = max( 0, $sale_cents - $total_rescue );
+        $rescue_percent = $sale_cents > 0 ? ( $total_rescue / $sale_cents ) * 100 : 0;
+        $larry_percent  = $sale_cents > 0 ? ( $total_larry / $sale_cents ) * 100 : 0;
+
+        return array(
+            'rescue_percent' => round( $rescue_percent, 4 ),
+            'larry_percent'  => round( $larry_percent, 4 ),
+            'rescue_cents'   => $total_rescue,
+            'larry_cents'    => $total_larry,
+        );
+    }
 
     $sp = li_get_split_config( $product['id'] );
     if ( $sp ) {
@@ -633,7 +872,7 @@ function li_record_order( $args ) {
         }
     }
 
-    $split = li_calculate_splits( $product, $sale_cents, $rescue );
+    $split = li_calculate_splits( $product, $sale_cents, $rescue, $quantity );
     $split_version = li_get_split_version( $product_id );
 
     $payload = array(
@@ -714,3 +953,54 @@ function li_cron_run_auto_payouts() {
 if ( ! wp_next_scheduled( 'li_auto_payouts_cron' ) ) {
     wp_schedule_event( time(), 'daily', 'li_auto_payouts_cron' );
 }
+
+
+// One-time administrator cleanup for duplicate unassigned Shopify imports (Oct 30, 2026).
+add_action( 'admin_init', function() {
+    if ( empty( $_GET['li_cleanup_duplicate_imports'] ) || ! current_user_can( 'manage_options' ) ) return;
+    $refs = array( '7275140612293', '7211553784005' );
+    $key = li_service_key();
+    foreach ( $refs as $ref ) {
+        wp_remote_request( LI_DB_URL . '/rest/v1/orders?shopify_order_id=like.' . urlencode( $ref . '::*' ) . '&rescue_id=is.null', array(
+            'method' => 'DELETE',
+            'headers' => array(
+                'apikey' => $key,
+                'Authorization' => 'Bearer ' . $key,
+                'Prefer' => 'return=minimal',
+            ),
+        ) );
+        li_audit_log( 'duplicate_import_removed', array( 'order_ref' => $ref ), 'order', $ref );
+    }
+    wp_safe_redirect( admin_url( 'admin.php?page=li-splits&duplicates_removed=1' ) );
+    exit;
+} );
+
+// One-time row-ID cleanup for legacy duplicate unassigned Shopify imports (Oct 30, 2026).
+add_action( 'admin_init', function() {
+    if ( empty( $_GET['li_cleanup_duplicate_imports_v2'] ) || ! current_user_can( 'manage_options' ) ) return;
+    $refs = array( '7275140612293', '7211553784005' );
+    $key = li_service_key();
+    $response = wp_remote_get( LI_DB_URL . '/rest/v1/orders?rescue_id=is.null&select=id,shopify_order_id', array(
+        'headers' => array( 'apikey' => $key, 'Authorization' => 'Bearer ' . $key ),
+    ) );
+    $rows = json_decode( wp_remote_retrieve_body( $response ), true );
+    $removed = 0;
+    if ( is_array( $rows ) ) foreach ( $rows as $row ) {
+        $stored = (string) ( $row['shopify_order_id'] ?? '' );
+        foreach ( $refs as $ref ) {
+            if ( $stored === $ref || strpos( $stored, $ref . '::' ) === 0 ) {
+                $delete = wp_remote_request( LI_DB_URL . '/rest/v1/orders?id=eq.' . rawurlencode( $row['id'] ), array(
+                    'method' => 'DELETE',
+                    'headers' => array( 'apikey' => $key, 'Authorization' => 'Bearer ' . $key, 'Prefer' => 'return=minimal' ),
+                ) );
+                if ( ! is_wp_error( $delete ) && wp_remote_retrieve_response_code( $delete ) >= 200 && wp_remote_retrieve_response_code( $delete ) < 300 ) {
+                    $removed++;
+                    li_audit_log( 'duplicate_import_removed', array( 'order_ref' => $ref, 'row_id' => $row['id'] ), 'order', $ref );
+                }
+                break;
+            }
+        }
+    }
+    wp_safe_redirect( admin_url( 'admin.php?page=li-splits&duplicates_removed_v2=' . $removed ) );
+    exit;
+} );
