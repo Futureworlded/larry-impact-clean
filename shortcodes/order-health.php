@@ -585,27 +585,12 @@ function li_shopify_reconcile_cron() {
 }
 
 /**
- * Lists active Shopify product variants whose SKU is not in the Larry product list.
+ * Lists Shopify products for sale that Larry cannot record correctly: missing from Larry or without a rescue payout.
  */
 function li_shopify_catalog_gaps() {
-    $query = 'query LarryVariants($cursor: String) {
-        productVariants(first: 250, after: $cursor) {
-            pageInfo { hasNextPage endCursor }
-            nodes { sku displayName price product { status } }
-        }
-    }';
-    $larry = array();
-    for ( $offset = 0; $offset < 20000; $offset += 1000 ) {
-        $rows = li_db_get( 'products?select=sku&order=id.asc&limit=1000&offset=' . $offset );
-        if ( ! is_array( $rows ) || empty( $rows ) ) {
-            break;
-        }
-        foreach ( $rows as $row ) {
-            $larry[ (string) ( $row['sku'] ?? '' ) ] = true;
-        }
-        if ( count( $rows ) < 1000 ) {
-            break;
-        }
+    $variants = li_shopify_active_variants();
+    if ( is_wp_error( $variants ) ) {
+        return $variants;
     }
     $components = array();
     foreach ( li_shopify_bundle_definitions() as $parts ) {
@@ -613,27 +598,110 @@ function li_shopify_catalog_gaps() {
             $components[ (string) $sku ] = true;
         }
     }
-    $gaps   = array();
-    $cursor = null;
-    for ( $page = 0; $page < 40; $page++ ) {
-        $data = li_shopify_graphql( $query, array( 'cursor' => $cursor ) );
-        if ( is_wp_error( $data ) ) {
-            return $data;
+    $gaps = array();
+    foreach ( $variants as $variant ) {
+        $sku = $variant['sku'];
+        if ( isset( $components[ $sku ] ) ) {
+            continue;
         }
-        foreach ( (array) ( $data['productVariants']['nodes'] ?? array() ) as $variant ) {
-            $sku = (string) ( $variant['sku'] ?? '' );
-            if ( 'ACTIVE' !== ( $variant['product']['status'] ?? '' ) || isset( $larry[ $sku ] ) || isset( $components[ $sku ] ) ) {
-                continue;
+        $product = '' !== $sku ? li_get_product_by_sku( $sku ) : null;
+        if ( ! $product ) {
+            $issue = '' === $sku ? 'No SKU in Shopify' : 'Not in Larry';
+        } elseif ( li_get_product_rescue_cents( $product ) <= 0 ) {
+            $issue = 'No rescue payout set';
+        } else {
+            continue;
+        }
+        $gaps[] = array( 'sku' => $sku, 'name' => $variant['name'], 'price' => $variant['price'], 'issue' => $issue );
+    }
+    set_transient( 'li_shopify_catalog_gaps', array( 'checked_at' => time(), 'gaps' => $gaps ), 2 * DAY_IN_SECONDS );
+    return $gaps;
+}
+
+// Uses the Admin API when a token is saved, otherwise the store's public product feed.
+function li_shopify_active_variants() {
+    $out = array();
+    if ( li_shopify_admin_token() ) {
+        $query  = 'query LarryVariants($cursor: String) {
+            productVariants(first: 250, after: $cursor) {
+                pageInfo { hasNextPage endCursor }
+                nodes { sku displayName price product { status } }
             }
-            $gaps[] = array( 'sku' => $sku, 'name' => $variant['displayName'] ?? '', 'price' => $variant['price'] ?? '' );
+        }';
+        $cursor = null;
+        for ( $page = 0; $page < 40; $page++ ) {
+            $data = li_shopify_graphql( $query, array( 'cursor' => $cursor ) );
+            if ( is_wp_error( $data ) ) {
+                return $data;
+            }
+            foreach ( (array) ( $data['productVariants']['nodes'] ?? array() ) as $v ) {
+                if ( 'ACTIVE' === ( $v['product']['status'] ?? '' ) ) {
+                    $out[] = array( 'sku' => trim( (string) ( $v['sku'] ?? '' ) ), 'name' => (string) ( $v['displayName'] ?? '' ), 'price' => (string) ( $v['price'] ?? '' ) );
+                }
+            }
+            if ( empty( $data['productVariants']['pageInfo']['hasNextPage'] ) ) {
+                break;
+            }
+            $cursor = $data['productVariants']['pageInfo']['endCursor'];
         }
-        if ( empty( $data['productVariants']['pageInfo']['hasNextPage'] ) ) {
+        return $out;
+    }
+    $store = preg_replace( '#^https?://|/.*$#', '', (string) get_option( 'li_shopify_store', 'larrybev.myshopify.com' ) );
+    for ( $page = 1; $page <= 20; $page++ ) {
+        $r = wp_remote_get( 'https://' . $store . '/products.json?limit=250&page=' . $page, array( 'timeout' => 20 ) );
+        if ( is_wp_error( $r ) || 200 !== wp_remote_retrieve_response_code( $r ) ) {
+            return new WP_Error( 'shopify_feed', 'Could not read the Shopify product list.' );
+        }
+        $products = json_decode( wp_remote_retrieve_body( $r ), true )['products'] ?? array();
+        foreach ( (array) $products as $product ) {
+            foreach ( (array) ( $product['variants'] ?? array() ) as $v ) {
+                $name  = (string) ( $product['title'] ?? '' );
+                $title = (string) ( $v['title'] ?? '' );
+                $out[] = array(
+                    'sku'   => trim( (string) ( $v['sku'] ?? '' ) ),
+                    'name'  => 'Default Title' === $title ? $name : $name . ' - ' . $title,
+                    'price' => (string) ( $v['price'] ?? '' ),
+                );
+            }
+        }
+        if ( count( (array) $products ) < 250 ) {
             break;
         }
-        $cursor = $data['productVariants']['pageInfo']['endCursor'];
     }
-    set_transient( 'li_shopify_catalog_gaps', array( 'checked_at' => time(), 'gaps' => $gaps ), DAY_IN_SECONDS );
-    return $gaps;
+    return $out;
+}
+
+add_action( 'init', 'li_schedule_shopify_catalog_check' );
+function li_schedule_shopify_catalog_check() {
+    if ( ! wp_next_scheduled( 'li_shopify_catalog_cron' ) ) {
+        wp_schedule_event( time() + 600, 'daily', 'li_shopify_catalog_cron' );
+    }
+}
+
+add_action( 'li_shopify_catalog_cron', 'li_shopify_catalog_cron' );
+function li_shopify_catalog_cron() {
+    $gaps = li_shopify_catalog_gaps();
+    if ( is_wp_error( $gaps ) ) {
+        li_log( 'Shopify product check failed: ' . $gaps->get_error_message() );
+        return;
+    }
+    $key = md5( wp_json_encode( $gaps ) );
+    if ( ! $gaps ) {
+        delete_option( 'li_shopify_catalog_alerted' );
+        return;
+    }
+    if ( get_option( 'li_shopify_catalog_alerted' ) === $key ) {
+        return;
+    }
+    $lines = array();
+    foreach ( $gaps as $gap ) {
+        $lines[] = '- ' . $gap['name'] . ' (' . ( '' !== $gap['sku'] ? $gap['sku'] : 'no SKU' ) . ', $' . $gap['price'] . '): ' . $gap['issue'];
+    }
+    li_notify_admin(
+        'Shopify products not set up in Larry: ' . count( $gaps ),
+        "These products are for sale in Shopify but Larry cannot record them correctly yet. Orders for them will be held in Order Health until they are added.\n\n" . implode( "\n", $lines ) . "\n\nReview: " . admin_url( 'admin.php?page=li-order-health' )
+    );
+    update_option( 'li_shopify_catalog_alerted', $key, false );
 }
 
 /* ---------- Admin page ---------- */
@@ -772,7 +840,7 @@ function li_page_order_health() {
 
     echo '<div class="li-card"><div class="li-card-title">Shopify order check</div>';
     if ( ! li_shopify_admin_token() ) {
-        echo '<p style="margin:0">Not connected. Add a Shopify Admin API token in Larry Impact &rarr; Settings to check paid Shopify orders every hour and find products Larry does not know about.</p>';
+        echo '<p style="margin:0">Not connected. Add a Shopify Admin API token in Larry Impact &rarr; Settings to check paid Shopify orders every hour.</p>';
     } else {
         $last = get_option( 'li_shopify_reconcile_last', array() );
         if ( ! empty( $last['run_at'] ) ) {
@@ -782,18 +850,22 @@ function li_page_order_health() {
         }
         echo li_order_health_form( 'reconcile', '<input type="hidden" name="days" value="0" />', 'Check now' );
         echo ' ' . li_order_health_form( 'reconcile', '<input type="hidden" name="days" value="90" />', 'Check last 90 days', 0, 'li-btn li-btn-sm' );
-        echo ' ' . li_order_health_form( 'catalog', '', 'Find Shopify products missing from Larry', 0, 'li-btn li-btn-sm' );
-        $catalog = get_transient( 'li_shopify_catalog_gaps' );
-        if ( is_array( $catalog ) ) {
-            $gaps = $catalog['gaps'];
-            echo '<p style="margin:16px 0 8px"><strong>' . esc_html( count( $gaps ) ) . '</strong> active Shopify products are not in the Larry product list (checked ' . esc_html( wp_date( 'M j g:i a', intval( $catalog['checked_at'] ) ) ) . ').</p>';
-            if ( $gaps ) {
-                echo '<div class="li-table-wrap"><table class="li-table"><thead><tr><th>SKU</th><th>Product</th><th>Price</th></tr></thead><tbody>';
-                foreach ( $gaps as $gap ) {
-                    echo '<tr><td>' . esc_html( '' !== $gap['sku'] ? $gap['sku'] : '(no SKU)' ) . '</td><td>' . esc_html( $gap['name'] ) . '</td><td>' . esc_html( $gap['price'] ) . '</td></tr>';
-                }
-                echo '</tbody></table></div>';
+    }
+    echo '</div>';
+
+    echo '<div class="li-card"><div class="li-card-title">Shopify products</div>';
+    echo '<p class="li-hint" style="margin-top:0">Checked every day. An email goes out when a product for sale in Shopify is missing from Larry or has no rescue payout.</p>';
+    echo li_order_health_form( 'catalog', '', 'Check now', 0, 'li-btn li-btn-sm' );
+    $catalog = get_transient( 'li_shopify_catalog_gaps' );
+    if ( is_array( $catalog ) ) {
+        $gaps = $catalog['gaps'];
+        echo '<p style="margin:16px 0 8px">' . ( $gaps ? '<strong>' . esc_html( count( $gaps ) ) . '</strong> Shopify products need setting up in Larry' : 'Every Shopify product is set up in Larry' ) . ' (checked ' . esc_html( wp_date( 'M j g:i a', intval( $catalog['checked_at'] ) ) ) . ').</p>';
+        if ( $gaps ) {
+            echo '<div class="li-table-wrap"><table class="li-table"><thead><tr><th>SKU</th><th>Product</th><th>Price</th><th>Problem</th></tr></thead><tbody>';
+            foreach ( $gaps as $gap ) {
+                echo '<tr><td>' . esc_html( '' !== $gap['sku'] ? $gap['sku'] : '(no SKU)' ) . '</td><td>' . esc_html( $gap['name'] ) . '</td><td>' . esc_html( $gap['price'] ) . '</td><td>' . esc_html( $gap['issue'] ?? 'Not in Larry' ) . '</td></tr>';
             }
+            echo '</tbody></table></div>';
         }
     }
     echo '</div>';
