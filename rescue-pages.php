@@ -359,7 +359,7 @@ function li_rescue_public_shortcode( $atts ) {
     .li-rp-coffee-grid { display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:36px; }
     .li-rp-coffee-card { background:#fff;border:1px solid #ede8e0;border-radius:8px;overflow:hidden;display:flex;flex-direction:column;text-align:center;transition:transform 0.25s,box-shadow 0.25s; }
     .li-rp-coffee-card:hover { transform:translateY(-3px);box-shadow:0 6px 16px rgba(0,0,0,0.08); }
-    .li-rp-coffee-card-img { width:100%;height:180px;object-fit:cover;display:block; }
+    .li-rp-coffee-card-img { width:100%;height:320px;object-fit:cover;display:block; }
     .li-rp-coffee-card-body { padding:16px 16px 18px;display:flex;flex-direction:column;flex:1; }
     .li-rp-coffee-card h3 { font-size:14px;font-weight:900;color:#1a1a1a;margin:0 0 4px;line-height:1.2; }
     .li-rp-coffee-roast { font-size:11px;font-weight:700;color:#CEA83D;margin:0 0 10px;letter-spacing:0.5px; }
@@ -508,12 +508,12 @@ function li_rescue_public_shortcode( $atts ) {
                 <?php endif; ?>
 
                 <div class="li-rp-sidebar-card">
-                    <div class="li-rp-sidebar-label">How It Works</div>
+                    <div class="li-rp-sidebar-label">YOUR IMPACT</div>
                     <div style="font-size:13px;color:#555;line-height:1.9;">
-                        <div style="margin-bottom:8px;">🛒 <strong>You shop</strong> coffee or merch</div>
-                        <div style="margin-bottom:8px;">🐾 <strong><?php echo $name; ?> earns</strong> <?php echo number_format( $rescue_split, 0 ); ?>% of net profits</div>
-                        <div style="margin-bottom:8px;">♡ <strong>Animals are saved</strong> with every purchase</div>
-                        <div>✓ <strong>Transparent</strong> — tracked in real time</div>
+                        <div style="margin-bottom:8px;">🛒 <strong>You shop</strong> coffee, merch, or rescue essentials.</div>
+                        <div style="margin-bottom:8px;">🐾 <strong><?php echo $name; ?> receives</strong> a set amount for each product sold. Larry Impact uses the remainder to support the mission.</div>
+                        <div style="margin-bottom:8px;">♡ <strong>Your purchase helps save lives,</strong> provide food, medical care, & second chances.</div>
+                        <div>✓ <strong>Track Impact</strong> — every transaction is transparent and measurable.</div>
                     </div>
                 </div>
 
@@ -555,7 +555,7 @@ function li_rescue_shop_sections( $rescue_name, $rescue_slug ) {
         </div>
         <div class="li-rp-coffee-grid">
             <div class="li-rp-coffee-card">
-                <img class="li-rp-coffee-card-img" src="https://larryimpact.com/wp-content/uploads/2026/06/Pony-Espresso-website.jpg" alt="Pony Espresso" />
+                <img class="li-rp-coffee-card-img" src="https://larryimpact.com/wp-content/uploads/2026/06/Pony-bag.jpg" alt="Pony Espresso" />
                 <div class="li-rp-coffee-card-body">
                 <h3>Pony Espresso</h3>
                 <p class="li-rp-coffee-roast">Espresso Blend</p>
@@ -565,7 +565,7 @@ function li_rescue_shop_sections( $rescue_name, $rescue_slug ) {
                 </div>
             </div>
             <div class="li-rp-coffee-card">
-                <img class="li-rp-coffee-card-img" src="https://larryimpact.com/wp-content/uploads/2026/06/Rescue-Roast-Ground-Website.jpg" alt="Rescue Roast" />
+                <img class="li-rp-coffee-card-img" src="https://larryimpact.com/wp-content/uploads/2026/06/Rescue-Roast-bag.jpg" alt="Rescue Roast" />
                 <div class="li-rp-coffee-card-body">
                 <h3>Rescue Roast</h3>
                 <p class="li-rp-coffee-roast">Medium Roast</p>
@@ -575,17 +575,7 @@ function li_rescue_shop_sections( $rescue_name, $rescue_slug ) {
                 </div>
             </div>
             <div class="li-rp-coffee-card">
-                <img class="li-rp-coffee-card-img" src="https://larryimpact.com/wp-content/uploads/2026/06/Whiskey-Barrel-website.jpg" alt="Whiskey Barrel" />
-                <div class="li-rp-coffee-card-body">
-                <h3>Whiskey Barrel</h3>
-                <p class="li-rp-coffee-roast">Flavored Medium Roast</p>
-                <p class="li-rp-coffee-desc">A medium roast with subtle whiskey barrel notes. Smooth, complex, and unlike anything else in the lineup.</p>
-                <p class="li-rp-coffee-price">$25.99</p>
-                <a href="https://larrybev.myshopify.com/products/whiskey-barrel?rescue=<?php echo urlencode($rescue_slug); ?>" target="_blank" class="li-rp-coffee-buy">Buy Now</a>
-                </div>
-            </div>
-            <div class="li-rp-coffee-card">
-                <img class="li-rp-coffee-card-img" src="https://larryimpact.com/wp-content/uploads/2026/06/Bark-Roast-Website.jpg" alt="Bark Roast" />
+                <img class="li-rp-coffee-card-img" src="https://larryimpact.com/wp-content/uploads/2026/06/Bark-bag.jpg" alt="Bark Roast" />
                 <div class="li-rp-coffee-card-body">
                 <h3>Bark Roast</h3>
                 <p class="li-rp-coffee-roast">Medium-Dark Roast</p>
@@ -595,7 +585,17 @@ function li_rescue_shop_sections( $rescue_name, $rescue_slug ) {
                 </div>
             </div>
             <div class="li-rp-coffee-card">
-                <img class="li-rp-coffee-card-img" src="https://larryimpact.com/wp-content/uploads/2026/06/Frenchie-Vanilla-website.jpg" alt="Frenchie Vanilla" />
+                <img class="li-rp-coffee-card-img" src="https://larryimpact.com/wp-content/uploads/2026/06/Whiskey-Barrel-bag.jpg" alt="Whiskey Barrel" />
+                <div class="li-rp-coffee-card-body">
+                <h3>Whiskey Barrel</h3>
+                <p class="li-rp-coffee-roast">Flavored Medium Roast</p>
+                <p class="li-rp-coffee-desc">A medium roast with subtle whiskey barrel notes. Smooth, complex, and unlike anything else in the lineup.</p>
+                <p class="li-rp-coffee-price">$25.99</p>
+                <a href="https://larrybev.myshopify.com/products/whiskey-barrel?rescue=<?php echo urlencode($rescue_slug); ?>" target="_blank" class="li-rp-coffee-buy">Buy Now</a>
+                </div>
+            </div>
+            <div class="li-rp-coffee-card">
+                <img class="li-rp-coffee-card-img" src="https://larryimpact.com/wp-content/uploads/2026/06/Frenchie-bag.jpg" alt="Frenchie Vanilla" />
                 <div class="li-rp-coffee-card-body">
                 <h3>Frenchie Vanilla</h3>
                 <p class="li-rp-coffee-roast">Flavored Medium Roast</p>
@@ -605,7 +605,7 @@ function li_rescue_shop_sections( $rescue_name, $rescue_slug ) {
                 </div>
             </div>
             <div class="li-rp-coffee-card">
-                <img class="li-rp-coffee-card-img" src="https://larryimpact.com/wp-content/uploads/2026/06/Howlin-at-the-Moon-website.jpg" alt="Howlin At The Moon" />
+                <img class="li-rp-coffee-card-img" src="https://larryimpact.com/wp-content/uploads/2026/06/Howlin-bag.jpg" alt="Howlin At The Moon" />
                 <div class="li-rp-coffee-card-body">
                 <h3>Howlin At The Moon</h3>
                 <p class="li-rp-coffee-roast">Functional Wellness Blend</p>
@@ -643,7 +643,7 @@ function li_rescue_shop_sections( $rescue_name, $rescue_slug ) {
             </div>
             <a href="/product-category/merch/" class="li-rp-shop-view-all">View All Merch &rarr;</a>
         </div>
-        <div class="li-rp-woo-wrap"><?php echo do_shortcode('[products limit="4" columns="4" category="merch" orderby="menu_order" order="ASC"]'); ?></div>
+        <div class="li-rp-woo-wrap"><?php echo do_shortcode('[product_categories parent="24" columns="3"]'); ?></div>
     </div>
 
     <?php

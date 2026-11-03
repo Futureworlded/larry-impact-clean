@@ -260,15 +260,15 @@ function li_rescue_profile_shortcode() {
         var fd=new FormData();fd.append("action","li_media_upload");fd.append("li_file",input.files[0]);fd.append("li_nonce",LI_NONCE);fd.append("rescue_id",rid);
         try{
             var res=await fetch(LI_AJAX,{method:"POST",body:fd});var data=await res.json();
-            if(data.success&&data.data.url){
+            if(!data.success){throw new Error(data.data&&data.data.message?data.data.message:"Upload failed.");}
+            if(!data.data||!data.data.url){throw new Error("Upload failed.");}
                 var el=document.getElementById(iid);
                 if(el.tagName==="IMG"){el.src=data.data.url;}else{var img=document.createElement("img");img.src=data.data.url;img.className="li-rd-media-thumb";img.id=iid;el.parentNode.replaceChild(img,el);}
                 var pfd=new FormData();pfd.append("action","li_update_rescue_field");pfd.append("li_nonce",LI_NONCE);pfd.append("rescue_id",rid);pfd.append("field",field);pfd.append("value",data.data.url);
                 var pres=await fetch(LI_AJAX,{method:"POST",body:pfd});var pdata=await pres.json();
                 if(!pdata.success)throw new Error(pdata.data&&pdata.data.message?pdata.data.message:"Save failed");
                 document.getElementById(sid).textContent="Uploaded.";setTimeout(function(){document.getElementById(sid).textContent="";},2000);
-            }
-        }catch(e){document.getElementById(sid).textContent="Upload failed.";}
+        }catch(e){document.getElementById(sid).textContent=e.message||"Upload failed.";}
     }';
     echo '</script>';
     echo '</div>';
@@ -338,6 +338,7 @@ function li_rescue_account_shortcode() {
     $stripe_id       = $rescue['stripe_account_id'] ?? '';
     $stripe_verified = false;
     $connect_url     = '';
+    $connect_error   = '';
     $stripe_sk = li_stripe_sk();
 
     // Helper: invalidate a stored Stripe account ID so we create a fresh one.
@@ -355,7 +356,8 @@ function li_rescue_account_shortcode() {
         } else {
             $sd = json_decode( wp_remote_retrieve_body( $sc ), true );
             if ( ! empty( $sd['error'] ) ) {
-                li_log( 'Stripe account lookup failed for ' . $stripe_id . ': ' . wp_remote_retrieve_body( $sc ) );
+                $connect_error = 'Stripe account lookup failed: ' . ( $sd['error']['message'] ?? $sd['error'] );
+                li_log( $connect_error . ' ' . wp_remote_retrieve_body( $sc ) );
                 $li_clear_stripe_account( $rescue['id'] );
             } else {
                 $stripe_verified = ! empty( $sd['payouts_enabled'] ) && $sd['payouts_enabled'] === true;
@@ -363,13 +365,13 @@ function li_rescue_account_shortcode() {
         }
     }
 
-    if ( ! $stripe_verified && $rescue ) {
+    if ( ! $stripe_verified && $rescue && ! $connect_error ) {
         $return_url  = home_url( '/dashboard/my-account/?stripe_connect=success' );
         $refresh_url = home_url( '/dashboard/my-account/?stripe_connect=refresh' );
 
         // Try to create or recreate an Express account up to once.
         $attempts = 0;
-        while ( ! $stripe_id && $attempts < 2 ) {
+        while ( ! $stripe_id && $attempts < 2 && ! $connect_error ) {
             $attempts++;
             $nr = wp_remote_post( 'https://api.stripe.com/v1/accounts', array(
                 'headers' => array( 'Authorization' => 'Bearer ' . $stripe_sk, 'Content-Type' => 'application/x-www-form-urlencoded' ),
@@ -388,7 +390,8 @@ function li_rescue_account_shortcode() {
                     $stripe_id = $na['id'];
                     li_db_patch( 'rescues?id=eq.' . urlencode( $rescue['id'] ), array( 'stripe_account_id' => $stripe_id ) );
                 } elseif ( ! empty( $na['error'] ) ) {
-                    li_log( 'Stripe account creation failed (attempt ' . $attempts . '): ' . wp_remote_retrieve_body( $nr ) );
+                    $connect_error = 'Stripe account creation failed: ' . ( $na['error']['message'] ?? $na['error'] );
+                    li_log( $connect_error . ' ' . wp_remote_retrieve_body( $nr ) );
                 }
             }
         }
@@ -403,7 +406,8 @@ function li_rescue_account_shortcode() {
                 if ( ! empty( $ll['url'] ) ) {
                     $connect_url = $ll['url'];
                 } elseif ( ! empty( $ll['error'] ) ) {
-                    li_log( 'Stripe account link failed: ' . wp_remote_retrieve_body( $lr ) );
+                    $connect_error = 'Stripe onboarding link failed: ' . ( $ll['error']['message'] ?? $ll['error'] );
+                    li_log( $connect_error . ' ' . wp_remote_retrieve_body( $lr ) );
                 }
             }
         }
@@ -490,7 +494,18 @@ function li_rescue_account_shortcode() {
         echo '<div class="li-setup-help"><strong>What to expect</strong><ul><li>Stripe will ask for your rescueâs bank details and a contact person.</li><li>Use the same email you used here if possible.</li><li>When finished, close the Stripe tab and return to this page.</li><li>It may take a few minutes for the connection to show complete.</li></ul></div>';
         echo '<a href="' . esc_url( $connect_url ) . '" class="li-rd-stripe-btn" target="_blank" rel="noopener noreferrer">Connect bank account</a>';
     } else {
-        echo '<div class="li-rd-err">Unable to generate the connection link. Please try again.</div>';
+        echo '<div class="li-rd-err">Unable to generate the Stripe connection link.</div>';
+        if ( $connect_error ) {
+            $needs_connect = stripos( $connect_error, 'signed up for Connect' ) !== false;
+            echo '<p style="font-size:13px;color:#6b6560;margin-top:12px;line-height:1.6;"><strong>Stripe message:</strong> ' . esc_html( $connect_error ) . '</p>';
+            if ( $needs_connect ) {
+                echo '<p style="font-size:13px;color:#6b6560;margin-top:12px;line-height:1.6;">The Larry Impact Stripe account is not signed up for Stripe Connect. The platform owner must enable Connect in the Stripe dashboard before rescues can connect bank accounts.<br><a href="https://dashboard.stripe.com/connect" target="_blank" rel="noopener noreferrer" style="font-weight:700;">Open Stripe Connect setup</a></p>';
+            } else {
+                echo '<p style="font-size:13px;color:#6b6560;margin-top:12px;line-height:1.6;">Please copy the message above and contact support if it does not resolve.</p>';
+            }
+        } else {
+            echo '<p style="font-size:13px;color:#6b6560;margin-top:12px;line-height:1.6;">Please try again or contact support.</p>';
+        }
     }
     echo '</div>';
 
@@ -498,7 +513,7 @@ function li_rescue_account_shortcode() {
     $split = floatval( $rescue['rescue_split_percent'] ?? get_option( 'li_default_split', 55 ) );
     echo '<div class="li-setup-step done">';
     echo '<div class="li-setup-step-head"><div class="li-setup-step-num">4</div><div class="li-setup-step-title">Your Split</div><div class="li-setup-step-status">Review</div></div>';
-    echo '<p style="font-size:13px;color:#6b6560;margin:0;line-height:1.6;">Your rescue currently receives <strong>' . number_format( $split, 0 ) . '%</strong> of net profits after product costs. This can be adjusted by Larry Impact support if needed.</p>';
+    echo '<p style="font-size:13px;color:#6b6560;margin:0;line-height:1.6;">Your payout is set per product. The exact amount you receive for each item is shown in your earnings. Larry Impact keeps the remainder of the sale after your set payout.</p>';
     echo '</div>';
 
     echo '<script>
