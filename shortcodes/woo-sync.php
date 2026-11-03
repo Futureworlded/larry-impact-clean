@@ -195,107 +195,29 @@ add_action( 'rest_api_init', function() {
 function li_handle_shopify_webhook( WP_REST_Request $request ) {
     $secret = get_option( 'li_shopify_webhook_secret', '' );
     $raw    = $request->get_body();
-    $hmac   = $request->get_header( 'x-shopify-hmac-sha256' );
+    $hmac   = (string) $request->get_header( 'x-shopify-hmac-sha256' );
 
-    if ( $secret && $hmac ) {
-        $calculated = base64_encode( hash_hmac( 'sha256', $raw, $secret, true ) );
-        if ( ! hash_equals( $calculated, $hmac ) ) {
-            li_log( 'Shopify webhook HMAC verification failed' );
-            return new WP_Error( 'unauthorized', 'HMAC verification failed', array( 'status' => 401 ) );
-        }
+    if ( ! $secret ) {
+        li_log( 'Shopify webhook rejected: no Shopify webhook secret is saved in settings' );
+        return new WP_Error( 'unauthorized', 'Webhook secret not configured', array( 'status' => 401 ) );
+    }
+    $calculated = base64_encode( hash_hmac( 'sha256', $raw, $secret, true ) );
+    if ( '' === $hmac || ! hash_equals( $calculated, $hmac ) ) {
+        li_log( 'Shopify webhook HMAC verification failed' );
+        return new WP_Error( 'unauthorized', 'HMAC verification failed', array( 'status' => 401 ) );
     }
 
+    $topic   = sanitize_text_field( (string) $request->get_header( 'x-shopify-topic' ) );
     $payload = json_decode( $raw, true );
-    if ( ! $payload || empty( $payload['line_items'] ) ) {
+    if ( ! is_array( $payload ) || empty( $payload['line_items'] ) || in_array( $topic, array( 'orders/cancelled', 'orders/delete' ), true ) ) {
         return new WP_REST_Response( array( 'status' => 'ignored' ), 200 );
     }
 
-    $rescue = null;
-    $rescue_name = '';
-    $attributes = array_merge(
-        $payload['note_attributes'] ?? array(),
-        $payload['attributes'] ?? array()
-    );
-    foreach ( $attributes as $attr ) {
-        if ( isset( $attr['name'] ) && strtolower( $attr['name'] ) === 'rescue' ) {
-            $rescue_name = sanitize_text_field( $attr['value'] ?? '' );
-            break;
-        }
-    }
-    if ( $rescue_name ) {
-        $rescue = li_get_rescue_by_name( $rescue_name );
-        if ( ! $rescue ) {
-            $rescue = li_get_rescue_by_slug( sanitize_title( $rescue_name ) );
-        }
-    }
+    $result = li_ingest_shopify_order( $payload, array( 'topic' => $topic, 'signature' => 'verified' ) );
 
-    $ordered_at = sanitize_text_field( $payload['processed_at'] ?? $payload['created_at'] ?? gmdate( 'c' ) );
-    $order_number = ltrim( sanitize_text_field( $payload['name'] ?? strval( $payload['id'] ?? '0' ) ), '#' );
-    $channel      = 'shopify';
-
-    // Shopify Bundles sends component lines instead of the parent bundle.
-    // Collapse the known Big Rescue Treat Box composition into its parent SKU
-    // so the configured $8 rescue payout is applied exactly once.
-    $bundle_qty = array();
-    foreach ( $payload['line_items'] as $bundle_line ) {
-        $bundle_sku = sanitize_text_field( $bundle_line['sku'] ?? '' );
-        if ( $bundle_sku ) {
-            $bundle_qty[ $bundle_sku ] = ( $bundle_qty[ $bundle_sku ] ?? 0 ) + max( 1, intval( $bundle_line['quantity'] ?? 1 ) );
-        }
-    }
-    if ( count( $bundle_qty ) === 3
-        && intval( $bundle_qty['46602'] ?? 0 ) === 4
-        && intval( $bundle_qty['46334'] ?? 0 ) === 2
-        && intval( $bundle_qty['45729'] ?? 0 ) === 2 ) {
-        $bundle_product = li_get_product_by_sku( 'LI-BIG-TREAT-BOX' );
-        if ( $bundle_product ) {
-            $bundle_total = floatval( $payload['current_subtotal_price'] ?? $payload['subtotal_price'] ?? $payload['total_line_items_price'] ?? 64.99 );
-            li_record_order( array(
-                'order_id'   => $order_number,
-                'rescue_id'  => $rescue ? $rescue['id'] : null,
-                'product_id' => $bundle_product['id'],
-                'sale_cents' => intval( round( $bundle_total * 100 ) ),
-                'quantity'   => 1,
-                'channel'    => $channel,
-                'ordered_at' => $ordered_at,
-            ) );
-            return new WP_REST_Response( array( 'status' => 'ok', 'bundle' => 'LI-BIG-TREAT-BOX' ), 200 );
-        }
-    }
-
-    foreach ( $payload['line_items'] as $line ) {
-        $sku   = sanitize_text_field( $line['sku'] ?? '' );
-        $price = floatval( $line['price'] ?? 0 );
-        $qty   = intval( $line['quantity'] ?? 1 );
-        $discount = floatval( $line['total_discount'] ?? 0 );
-        $line_total = max( 0, ( $price * $qty ) - $discount );
-        $sale_cents = intval( round( $line_total * 100 ) );
-        if ( $sale_cents <= 0 ) continue;
-
-        $sp = null;
-        if ( $sku ) {
-            $sp = li_get_product_by_sku( $sku );
-        }
-        if ( ! $sp && ! empty( $line['product_id'] ) ) {
-            // Shopify product ID is not stored, so we cannot match without SKU.
-        }
-        if ( ! $sp ) {
-            li_log( 'Shopify line item skipped: no matching product for SKU ' . $sku );
-            continue;
-        }
-
-        li_record_order( array(
-            'order_id'   => $order_number,
-            'rescue_id'  => $rescue ? $rescue['id'] : null,
-            'product_id' => $sp['id'],
-            'sale_cents' => $sale_cents,
-            'quantity'   => max( 1, $qty ),
-            'channel'    => $channel,
-            'ordered_at' => $ordered_at,
-        ) );
-    }
-
-    return new WP_REST_Response( array( 'status' => 'ok' ), 200 );
+    // A database write failure is temporary, so ask Shopify to resend the order.
+    // Missing products and rescues are kept in Order Health for an admin to fix.
+    return new WP_REST_Response( array( 'status' => $result ), 'failed' === $result ? 503 : 200 );
 }
 
 
@@ -350,24 +272,3 @@ function li_save_product_rescue_cents_field( $product ) {
         $product->update_meta_data( '_li_rescue_cents', $cents );
     }
 }
-
-
-// One-time idempotent repair for paid Shopify bundle order LR-1005.
-add_action( 'admin_init', function() {
-    if ( empty( $_GET['li_backfill_lr1005'] ) || ! current_user_can( 'manage_options' ) ) return;
-    $rescue = li_get_rescue_by_slug( 'the-kris-kelly-foundation' );
-    $product = li_get_product_by_sku( 'LI-BIG-TREAT-BOX' );
-    if ( $rescue && $product ) {
-        li_record_order( array(
-            'order_id'   => 'LR-1005',
-            'rescue_id'  => $rescue['id'],
-            'product_id' => $product['id'],
-            'sale_cents' => 6499,
-            'quantity'   => 1,
-            'channel'    => 'shopify',
-            'ordered_at' => '2026-10-30T09:58:00-07:00',
-        ) );
-    }
-    wp_safe_redirect( admin_url( 'admin.php?page=li-splits&lr1005_repaired=1' ) );
-    exit;
-} );

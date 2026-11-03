@@ -6,6 +6,7 @@ function li_register_menu() {
     add_submenu_page( 'li-rescues', 'Rescues',          'Rescues',          'manage_options', 'li-rescues',    'li_page_rescues' );
     add_submenu_page( 'li-rescues', 'Applications',     'Applications',     'manage_options', 'li-apps',       'li_page_applications' );
     add_submenu_page( 'li-rescues', 'Split Dashboard',  'Split Dashboard',  'manage_options', 'li-splits',     'li_page_splits' );
+    add_submenu_page( 'li-rescues', 'Order Health',     'Order Health',     'manage_options', 'li-order-health', 'li_page_order_health' );
     add_submenu_page( 'li-rescues', 'Split Configurator','Split Configurator','manage_options','li-split-config','li_page_split_config' );
     add_submenu_page( 'li-rescues', 'Payouts',          'Payouts',          'manage_options', 'li-payouts',    'li_page_payouts' );
     add_submenu_page( 'li-rescues', 'Reports',          'Reports',          'manage_options', 'li-reports',    'li_page_reports' );

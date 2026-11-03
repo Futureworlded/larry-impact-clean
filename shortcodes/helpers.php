@@ -767,11 +767,11 @@ function li_get_rescue_by_slug( $slug ) {
 }
 
 function li_get_rescue_by_name( $name ) {
-    $data = li_db_get( 'rescues?name=ilike.' . urlencode( '%' . $name . '%' ) . '&select=*' );
-    if ( ! empty( $data ) ) {
-        return $data[0];
+    $name = trim( str_replace( array( '*', '%', ',', '(', ')' ), '', (string) $name ) );
+    if ( '' === $name ) {
+        return null;
     }
-    $data = li_db_get( 'rescues?name=eq.' . urlencode( $name ) . '&select=*' );
+    $data = li_db_get( 'rescues?name=ilike.' . urlencode( $name ) . '&select=*' );
     return ! empty( $data ) ? $data[0] : null;
 }
 
@@ -890,12 +890,12 @@ function li_record_order( $args ) {
     }
 
     $r = li_db_post( 'orders', $payload );
-    if ( $rescue_id ) {
-        li_award_rescue_points( $rescue_id, intval( floor( $split['rescue_cents'] / 100 ) ) );
-    }
     if ( is_wp_error( $r ) || wp_remote_retrieve_response_code( $r ) >= 400 ) {
         li_log( 'Failed to record order ' . $order_id . ' product ' . $product_id . ': ' . wp_remote_retrieve_response_code( $r ) . ' ' . wp_remote_retrieve_body( $r ) );
         return false;
+    }
+    if ( $rescue_id ) {
+        li_award_rescue_points( $rescue_id, intval( floor( $split['rescue_cents'] / 100 ) ) );
     }
 
     li_record_ledger( 'order', array(
@@ -913,7 +913,7 @@ function li_record_order( $args ) {
             'split_version'   => $split_version ? $split_version['version'] : 1,
             'split_version_id'=> $split_version ? $split_version['id'] : 0,
         ),
-        'source'       => 'woocommerce',
+        'source'       => sanitize_key( $args['channel'] ?? 'woocommerce' ),
     ) );
     li_lock_order( $line_order_id );
     li_audit_log( 'order_recorded', array( 'order_ref' => $line_order_id, 'amount_cents' => $sale_cents ), 'order', $line_order_id );
@@ -953,54 +953,3 @@ function li_cron_run_auto_payouts() {
 if ( ! wp_next_scheduled( 'li_auto_payouts_cron' ) ) {
     wp_schedule_event( time(), 'daily', 'li_auto_payouts_cron' );
 }
-
-
-// One-time administrator cleanup for duplicate unassigned Shopify imports (Oct 30, 2026).
-add_action( 'admin_init', function() {
-    if ( empty( $_GET['li_cleanup_duplicate_imports'] ) || ! current_user_can( 'manage_options' ) ) return;
-    $refs = array( '7275140612293', '7211553784005' );
-    $key = li_service_key();
-    foreach ( $refs as $ref ) {
-        wp_remote_request( LI_DB_URL . '/rest/v1/orders?shopify_order_id=like.' . urlencode( $ref . '::*' ) . '&rescue_id=is.null', array(
-            'method' => 'DELETE',
-            'headers' => array(
-                'apikey' => $key,
-                'Authorization' => 'Bearer ' . $key,
-                'Prefer' => 'return=minimal',
-            ),
-        ) );
-        li_audit_log( 'duplicate_import_removed', array( 'order_ref' => $ref ), 'order', $ref );
-    }
-    wp_safe_redirect( admin_url( 'admin.php?page=li-splits&duplicates_removed=1' ) );
-    exit;
-} );
-
-// One-time row-ID cleanup for legacy duplicate unassigned Shopify imports (Oct 30, 2026).
-add_action( 'admin_init', function() {
-    if ( empty( $_GET['li_cleanup_duplicate_imports_v2'] ) || ! current_user_can( 'manage_options' ) ) return;
-    $refs = array( '7275140612293', '7211553784005' );
-    $key = li_service_key();
-    $response = wp_remote_get( LI_DB_URL . '/rest/v1/orders?rescue_id=is.null&select=id,shopify_order_id', array(
-        'headers' => array( 'apikey' => $key, 'Authorization' => 'Bearer ' . $key ),
-    ) );
-    $rows = json_decode( wp_remote_retrieve_body( $response ), true );
-    $removed = 0;
-    if ( is_array( $rows ) ) foreach ( $rows as $row ) {
-        $stored = (string) ( $row['shopify_order_id'] ?? '' );
-        foreach ( $refs as $ref ) {
-            if ( $stored === $ref || strpos( $stored, $ref . '::' ) === 0 ) {
-                $delete = wp_remote_request( LI_DB_URL . '/rest/v1/orders?id=eq.' . rawurlencode( $row['id'] ), array(
-                    'method' => 'DELETE',
-                    'headers' => array( 'apikey' => $key, 'Authorization' => 'Bearer ' . $key, 'Prefer' => 'return=minimal' ),
-                ) );
-                if ( ! is_wp_error( $delete ) && wp_remote_retrieve_response_code( $delete ) >= 200 && wp_remote_retrieve_response_code( $delete ) < 300 ) {
-                    $removed++;
-                    li_audit_log( 'duplicate_import_removed', array( 'order_ref' => $ref, 'row_id' => $row['id'] ), 'order', $ref );
-                }
-                break;
-            }
-        }
-    }
-    wp_safe_redirect( admin_url( 'admin.php?page=li-splits&duplicates_removed_v2=' . $removed ) );
-    exit;
-} );
