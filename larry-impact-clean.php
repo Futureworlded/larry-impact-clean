@@ -3,7 +3,7 @@
  * Plugin Name: Larry Impact
  * Plugin URI:  https://larryimpact.com
  * Description: Powers all Larry Impact functionality.
- * Version:     3.3.0
+ * Version:     3.4.0
  * Author:      WebDesignMike.com
  */
 
@@ -52,6 +52,7 @@ $files = array(
     'woo-sync.php',
     'order-health.php',
     'shopify-catalog.php',
+    'shopify-refunds.php',
     'media-upload.php',
     'rescue-modal.php',
     'stripe-webhook.php',

@@ -5,8 +5,31 @@ function li_service_key() {
     if ( defined( 'LI_SERVICE_KEY' ) && LI_SERVICE_KEY ) {
         return LI_SERVICE_KEY;
     }
-    $key = get_option( 'li_service_key', '' );
-    return $key ? $key : LI_DB_KEY;
+    return (string) get_option( 'li_service_key', '' );
+}
+
+/**
+ * The plugin only talks to the database with the private server key. Without it,
+ * reads and writes stop with an error instead of quietly using the public key.
+ */
+function li_db_key_or_error() {
+    $key = li_service_key();
+    if ( '' === $key ) {
+        if ( ! get_transient( 'li_service_key_missing_logged' ) ) {
+            set_transient( 'li_service_key_missing_logged', 1, HOUR_IN_SECONDS );
+            error_log( 'Larry Impact: database server key is missing. Add it in Larry Impact > Settings.' );
+        }
+        return new WP_Error( 'li_no_service_key', 'The Larry database server key is missing. Add it in Larry Impact > Settings.' );
+    }
+    return $key;
+}
+
+add_action( 'admin_notices', 'li_service_key_missing_notice' );
+function li_service_key_missing_notice() {
+    if ( '' !== li_service_key() || ! current_user_can( 'manage_options' ) ) {
+        return;
+    }
+    echo '<div class="notice notice-error"><p><strong>Larry Impact:</strong> the database server key is missing, so orders and rescues cannot be read or saved. Add it in Larry Impact &gt; Settings.</p></div>';
 }
 
 function li_currency() {
@@ -22,7 +45,8 @@ function li_format_money( $cents ) {
 }
 
 function li_db_get( $endpoint ) {
-    $key = li_service_key();
+    $key = li_db_key_or_error();
+    if ( is_wp_error( $key ) ) return array();
     $response = wp_remote_get( LI_DB_URL . '/rest/v1/' . $endpoint, array(
         'headers' => array(
             'apikey'        => $key,
@@ -36,7 +60,8 @@ function li_db_get( $endpoint ) {
 }
 
 function li_db_patch( $endpoint, $data ) {
-    $key = li_service_key();
+    $key = li_db_key_or_error();
+    if ( is_wp_error( $key ) ) return $key;
     $data = wp_unslash( $data );
     return wp_remote_request( LI_DB_URL . '/rest/v1/' . $endpoint, array(
         'method'  => 'PATCH',
@@ -51,7 +76,8 @@ function li_db_patch( $endpoint, $data ) {
 }
 
 function li_db_post( $endpoint, $data ) {
-    $key = li_service_key();
+    $key = li_db_key_or_error();
+    if ( is_wp_error( $key ) ) return $key;
     $data = wp_unslash( $data );
     return wp_remote_post( LI_DB_URL . '/rest/v1/' . $endpoint, array(
         'headers' => array(
@@ -447,30 +473,39 @@ function li_process_payout_batch( $payout_id ) {
     if ( ! $rescue_id || ! $stripe_account_id ) {
         return array( 'success' => false, 'message' => 'No Stripe account on file for this rescue.' );
     }
+    if ( ! empty( $payout['transfer_id'] ) ) {
+        return array( 'success' => false, 'message' => 'This batch was already sent to Stripe (' . $payout['transfer_id'] . ').' );
+    }
     $total_cents = intval( $payout['amount_cents'] );
+    if ( $total_cents <= 0 ) {
+        return array( 'success' => false, 'message' => 'Payout batch amount must be above zero.' );
+    }
     $sk = li_stripe_sk();
     if ( ! $sk ) {
         return array( 'success' => false, 'message' => 'Stripe secret key is not configured.' );
     }
 
-    $r = wp_remote_post( 'https://api.stripe.com/v1/transfers', array(
-        'headers' => array(
-            'Authorization' => 'Bearer ' . $sk,
-        ),
-        'body'    => array(
-            'amount'      => $total_cents,
-            'currency'    => strtolower( li_currency() ),
-            'destination' => $stripe_account_id,
-        ),
+    // Claim the batch so two clicks or two cron runs cannot both send it.
+    $claimed = $wpdb->query( $wpdb->prepare(
+        "UPDATE {$wpdb->prefix}li_payouts SET status = 'sending' WHERE id = %d AND status IN ('ready','approved') AND ( transfer_id IS NULL OR transfer_id = '' )",
+        $payout_id
     ) );
+    if ( 1 !== intval( $claimed ) ) {
+        return array( 'success' => false, 'message' => 'This batch is already being sent.' );
+    }
+
+    $r = wp_remote_post( 'https://api.stripe.com/v1/transfers', li_stripe_transfer_request( $payout_id, $total_cents, $stripe_account_id, $sk ) );
     $response_code = wp_remote_retrieve_response_code( $r );
     $body          = json_decode( wp_remote_retrieve_body( $r ), true );
     if ( is_wp_error( $r ) || $response_code >= 400 ) {
+        // Put the batch back so it can be retried. If Stripe did make the transfer before
+        // the error, the retry's idempotency key returns that transfer instead of paying twice.
+        $wpdb->update( $wpdb->prefix . 'li_payouts', array( 'status' => $payout['status'] ), array( 'id' => $payout_id ), array( '%s' ), array( '%d' ) );
         li_audit_log( 'payout_stripe_failed', array( 'payout_id' => $payout_id, 'rescue_id' => $rescue_id, 'response' => $body ), 'payout', $payout_id );
         $error = is_wp_error( $r ) ? $r->get_error_message() : ( $body['error']['message'] ?? 'Stripe transfer failed.' );
         li_notify_admin(
             'Payout failed: ' . ( $rescue['name'] ?? 'Rescue' ),
-            "Rescue: " . ( $rescue['name'] ?? 'Rescue' ) . "\nAmount: " . li_format_money( $total_cents ) . "\nError: $error\n\nReview payouts: " . admin_url( 'admin.php?page=li-payouts' )
+            "Rescue: " . ( $rescue['name'] ?? 'Rescue' ) . "\nAmount: " . li_format_money( $total_cents ) . "\nError: $error\n\nRetrying this batch is safe: Stripe will not pay it twice.\n\nReview payouts: " . admin_url( 'admin.php?page=li-payouts' )
         );
         return array( 'success' => false, 'message' => $error );
     }
@@ -514,6 +549,27 @@ function li_process_payout_batch( $payout_id ) {
 }
 
 
+
+/**
+ * Stripe request for one payout batch. The idempotency key is tied to the batch,
+ * so a retried request returns the original transfer instead of making a new one.
+ */
+function li_stripe_transfer_request( $payout_id, $amount_cents, $destination, $secret_key ) {
+    return array(
+        'timeout' => 30,
+        'headers' => array(
+            'Authorization'   => 'Bearer ' . $secret_key,
+            'Idempotency-Key' => 'larry-payout-' . intval( $payout_id ) . '-' . intval( $amount_cents ),
+        ),
+        'body'    => array(
+            'amount'         => intval( $amount_cents ),
+            'currency'       => strtolower( li_currency() ),
+            'destination'    => $destination,
+            'transfer_group' => 'larry-payout-' . intval( $payout_id ),
+            'metadata'       => array( 'larry_payout_id' => intval( $payout_id ) ),
+        ),
+    );
+}
 
 function li_get_split_config( $product_id ) {
     $data = li_db_get( 'split_config?product_id=eq.' . urlencode( $product_id ) . '&select=*' );
@@ -888,6 +944,12 @@ function li_record_order( $args ) {
     }
 
     $r = li_db_post( 'orders', $payload );
+    if ( ! is_wp_error( $r ) && 409 === intval( wp_remote_retrieve_response_code( $r ) ) ) {
+        // The database already has this order line (unique shopify_order_id), e.g. two deliveries at once.
+        li_lock_order( $line_order_id );
+        li_log( 'Order line already in the database, not saved again: ' . $line_order_id );
+        return true;
+    }
     if ( is_wp_error( $r ) || wp_remote_retrieve_response_code( $r ) >= 400 ) {
         li_log( 'Failed to record order ' . $order_id . ' product ' . $product_id . ': ' . wp_remote_retrieve_response_code( $r ) . ' ' . wp_remote_retrieve_body( $r ) );
         return false;

@@ -75,6 +75,15 @@ function li_handle_mark_paid() {
     }
     $order = li_db_get( 'orders?id=eq.' . urlencode( $id ) . '&select=*' );
     $order = ! empty( $order ) ? $order[0] : null;
+    if ( ! $order ) {
+        wp_send_json_error( array( 'message' => 'Order not found.' ) );
+    }
+    if ( 'pending' !== ( $order['status'] ?? '' ) ) {
+        wp_send_json_error( array( 'message' => 'This order is already ' . ( $order['status'] ?? 'processed' ) . '.' ) );
+    }
+    if ( intval( $order['rescue_split_cents'] ?? 0 ) <= 0 ) {
+        wp_send_json_error( array( 'message' => "This is a refund line. It comes off the rescue's next payout automatically." ) );
+    }
     $r = li_db_patch( 'orders?id=eq.' . urlencode( $id ), array( 'status' => 'paid' ) );
     if ( is_wp_error( $r ) || wp_remote_retrieve_response_code( $r ) >= 400 ) {
         wp_send_json_error( array( 'message' => 'Could not update order status.' ) );
