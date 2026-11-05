@@ -853,7 +853,7 @@ function li_page_order_health() {
     if ( ! $open ) {
         echo '<p style="margin:0;color:#3a7a4a">Every order received has been recorded.</p>';
     } else {
-        echo '<p class="li-hint" style="margin-top:0">If a product is missing, add it as a hidden WooCommerce product with the same SKU and a rescue payout, then click Record order.</p>';
+        echo '<p class="li-hint" style="margin-top:0">If a rescue payout is missing, set it in Split Config, then click Record order. New Shopify products are added to Larry automatically.</p>';
         echo '<div class="li-table-wrap"><table class="li-table"><thead><tr><th>Received</th><th>Order</th><th>Problem</th><th>Action</th></tr></thead><tbody>';
         foreach ( $open as $event ) {
             $details = json_decode( (string) $event->details, true );
