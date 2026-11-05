@@ -6,15 +6,13 @@
  */
 if ( ! defined( 'ABSPATH' ) ) exit;
 
-function li_shopify_payouts() {
-    $map = get_option( 'li_shopify_rescue_cents', array() );
-    return is_array( $map ) ? $map : array();
-}
-
-function li_set_shopify_payout( $sku, $cents ) {
-    $map         = li_shopify_payouts();
-    $map[ $sku ] = max( 0, intval( $cents ) );
-    update_option( 'li_shopify_rescue_cents', $map, false );
+// A product's rescue payout lives only in products.rescue_cents.
+function li_set_product_rescue_cents( $sku, $cents ) {
+    if ( '' === (string) $sku ) {
+        return false;
+    }
+    $r = li_store_update( 'products', 'sku=eq.' . urlencode( $sku ), array( 'rescue_cents' => max( 0, intval( $cents ) ) ) );
+    return ! empty( $r );
 }
 
 function li_is_woo_sku( $sku ) {
@@ -32,7 +30,7 @@ function li_is_shopify_only_sku( $sku ) {
 
 // True when an administrator has set what the rescue earns for this product.
 function li_product_has_payout( $product ) {
-    return li_get_product_rescue_cents( $product ) > 0 || isset( li_shopify_payouts()[ $product['sku'] ?? '' ] );
+    return null !== ( $product['rescue_cents'] ?? null );
 }
 
 function li_upsert_shopify_product( $sku, $name, $price_cents ) {
