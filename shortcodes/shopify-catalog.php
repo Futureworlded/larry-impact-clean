@@ -12,6 +12,7 @@ function li_set_product_rescue_cents( $sku, $cents ) {
         return false;
     }
     $r = li_store_update( 'products', 'sku=eq.' . urlencode( $sku ), array( 'rescue_cents' => max( 0, intval( $cents ) ) ) );
+    delete_transient( 'li_shopify_catalog_gaps' );
     return ! empty( $r );
 }
 

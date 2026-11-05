@@ -144,84 +144,117 @@ function li_money_wp_table_exists( $table ) {
     return $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) === $table;
 }
 
-function li_money_migrate_from_wordpress() {
+/** Row count of a Supabase table (filters in $query), using PostgREST's exact count. */
+function li_store_count( $table, $query = '' ) {
+    $key = li_db_key_or_error();
+    if ( is_wp_error( $key ) ) {
+        return -1;
+    }
+    $r = wp_remote_get( LI_DB_URL . '/rest/v1/' . $table . '?select=id&limit=1' . ( $query ? '&' . $query : '' ), array(
+        'timeout' => 20,
+        'headers' => array( 'apikey' => $key, 'Authorization' => 'Bearer ' . $key, 'Prefer' => 'count=exact' ),
+    ) );
+    $range = is_wp_error( $r ) ? '' : (string) wp_remote_retrieve_header( $r, 'content-range' );
+    return preg_match( '#/(\d+)$#', $range, $m ) ? intval( $m[1] ) : -1;
+}
+
+/**
+ * Copies the WordPress money tables to Supabase a piece at a time, so each run
+ * stays short. Progress is saved after every chunk and the next run picks up
+ * where the last one stopped. When everything is copied, row counts and cent
+ * totals are compared table by table.
+ */
+function li_money_migrate_step( $budget_seconds = 15 ) {
     global $wpdb;
-    $report = array( 'status' => 'done', 'at' => li_store_now(), 'tables' => array(), 'error' => '' );
-    $payout_ids = array();
+    $start = microtime( true );
+    $state = get_option( 'li_money_migration', array() );
+    if ( ! is_array( $state ) || ! in_array( $state['status'] ?? '', array( 'running', 'failed' ), true ) ) {
+        $state = array( 'status' => 'running', 'started' => li_store_now(), 'progress' => array(), 'tables' => array(), 'error' => '' );
+    }
+    $state['status'] = 'running';
+    $state['error']  = '';
 
     foreach ( li_money_tables_map() as $wp_name => $map ) {
         list( $sb_table, $cols ) = $map;
-        $wp_table = $wpdb->prefix . $wp_name;
-        $row      = array( 'wp_rows' => 0, 'copied' => 0, 'supabase_rows' => 0, 'wp_cents' => 0, 'supabase_cents' => 0 );
-        if ( ! li_money_wp_table_exists( $wp_table ) ) {
-            $report['tables'][ $sb_table ] = $row;
+        $progress = $state['progress'][ $sb_table ] ?? array( 'last_id' => 0, 'done' => false );
+        if ( ! empty( $progress['done'] ) ) {
             continue;
         }
-        $max_id = intval( $wpdb->get_var( "SELECT MAX(id) FROM {$wp_table}" ) );
-        if ( $max_id >= 1000000 ) {
-            $report['status'] = 'failed';
-            $report['error']  = $wp_table . ' has IDs above 1,000,000 and cannot be copied safely.';
-            break;
+        $wp_table = $wpdb->prefix . $wp_name;
+        if ( ! li_money_wp_table_exists( $wp_table ) ) {
+            $state['progress'][ $sb_table ] = array( 'last_id' => 0, 'done' => true );
+            continue;
         }
-        $has_cents = in_array( 'amount_cents', $cols, true );
-        $last_id   = 0;
+        if ( intval( $wpdb->get_var( "SELECT MAX(id) FROM {$wp_table}" ) ) >= 1000000 ) {
+            $state['status'] = 'failed';
+            $state['error']  = $wp_table . ' has IDs above 1,000,000 and cannot be copied safely.';
+            update_option( 'li_money_migration', $state, false );
+            return $state;
+        }
+        $chunk = 'order_events' === $sb_table ? 100 : 500;
+        $where = 'payout_lines' === $sb_table ? " AND payout_id IN (SELECT id FROM {$wpdb->prefix}li_payouts)" : '';
         do {
-            $rows = $wpdb->get_results( $wpdb->prepare( 'SELECT ' . implode( ',', $cols ) . " FROM {$wp_table} WHERE id > %d ORDER BY id ASC LIMIT 200", $last_id ), ARRAY_A );
-            $batch = array();
-            foreach ( (array) $rows as $r ) {
-                $last_id = intval( $r['id'] );
-                $row['wp_rows']++;
-                if ( $has_cents ) {
-                    $row['wp_cents'] += intval( $r['amount_cents'] );
-                }
-                if ( 'payout_lines' === $sb_table && ! isset( $payout_ids[ intval( $r['payout_id'] ) ] ) ) {
-                    $row['orphans'] = ( $row['orphans'] ?? 0 ) + 1;
-                    continue;
-                }
-                if ( 'payout_batches' === $sb_table ) {
-                    $payout_ids[ intval( $r['id'] ) ] = true;
-                }
-                $batch[] = li_money_convert_row( $r );
-            }
-            if ( $batch ) {
-                $res = li_store_request( 'POST', $sb_table . '?on_conflict=id', $batch, 'resolution=ignore-duplicates,return=minimal' );
+            $rows = (array) $wpdb->get_results( $wpdb->prepare( 'SELECT ' . implode( ',', $cols ) . " FROM {$wp_table} WHERE id > %d{$where} ORDER BY id ASC LIMIT %d", $progress['last_id'], $chunk ), ARRAY_A );
+            if ( $rows ) {
+                $res = li_store_request( 'POST', $sb_table . '?on_conflict=id', array_map( 'li_money_convert_row', $rows ), 'resolution=ignore-duplicates,return=minimal' );
                 if ( is_wp_error( $res ) ) {
-                    $report['status'] = 'failed';
-                    $report['error']  = 'Copying ' . $wp_name . ': ' . $res->get_error_message();
-                    break 2;
+                    $state['status'] = 'failed';
+                    $state['error']  = 'Copying ' . $wp_name . ': ' . $res->get_error_message();
+                    update_option( 'li_money_migration', $state, false );
+                    return $state;
                 }
-                $row['copied'] += count( $batch );
+                $progress['last_id'] = intval( end( $rows )['id'] );
             }
-        } while ( count( (array) $rows ) === 200 );
+            if ( count( $rows ) < $chunk ) {
+                $progress['done'] = true;
+            }
+            $state['progress'][ $sb_table ] = $progress;
+            update_option( 'li_money_migration', $state, false );
+            if ( microtime( true ) - $start > $budget_seconds ) {
+                return $state;
+            }
+        } while ( empty( $progress['done'] ) );
+    }
 
-        $copied = li_store_select_all( $sb_table, 'select=id' . ( $has_cents ? ',amount_cents' : '' ) . '&id=lt.1000000' );
-        $row['supabase_rows'] = count( $copied );
-        if ( $has_cents ) {
-            $row['supabase_cents'] = array_sum( array_map( 'intval', array_column( $copied, 'amount_cents' ) ) );
+    // Everything is copied: compare row counts and cents.
+    foreach ( li_money_tables_map() as $wp_name => $map ) {
+        list( $sb_table, $cols ) = $map;
+        $wp_table = $wpdb->prefix . $wp_name;
+        $t = array( 'wp_rows' => 0, 'supabase_rows' => 0 );
+        if ( li_money_wp_table_exists( $wp_table ) ) {
+            $where        = 'payout_lines' === $sb_table ? " WHERE payout_id IN (SELECT id FROM {$wpdb->prefix}li_payouts)" : '';
+            $t['wp_rows'] = intval( $wpdb->get_var( "SELECT COUNT(*) FROM {$wp_table}{$where}" ) );
+            $t['supabase_rows'] = li_store_count( $sb_table, 'id=lt.1000000' );
+            if ( in_array( 'amount_cents', $cols, true ) ) {
+                $t['wp_cents']       = intval( $wpdb->get_var( "SELECT COALESCE(SUM(amount_cents),0) FROM {$wp_table}{$where}" ) );
+                $t['supabase_cents'] = array_sum( array_map( 'intval', array_column( li_store_select_all( $sb_table, 'select=id,amount_cents&id=lt.1000000' ), 'amount_cents' ) ) );
+            }
+            if ( $where ) {
+                $t['skipped_orphans'] = intval( $wpdb->get_var( "SELECT COUNT(*) FROM {$wp_table} WHERE payout_id NOT IN (SELECT id FROM {$wpdb->prefix}li_payouts)" ) );
+            }
         }
-        $expected_rows  = $row['wp_rows'] - intval( $row['orphans'] ?? 0 );
-        $expected_cents = $row['wp_cents'];
-        if ( 'payout_lines' === $sb_table && ! empty( $row['orphans'] ) ) {
-            $expected_cents = null;
-        }
-        if ( $row['supabase_rows'] !== $expected_rows || ( null !== $expected_cents && $has_cents && $row['supabase_cents'] !== $expected_cents ) ) {
-            $report['status'] = 'failed';
-            $report['error']  = $sb_table . ' does not match: WordPress ' . $expected_rows . ' rows, Supabase ' . $row['supabase_rows'] . ' rows.';
-        }
-        $report['tables'][ $sb_table ] = $row;
-        if ( 'failed' === $report['status'] ) {
-            break;
+        $state['tables'][ $sb_table ] = $t;
+        if ( $t['supabase_rows'] !== $t['wp_rows'] || ( $t['wp_cents'] ?? 0 ) !== ( $t['supabase_cents'] ?? 0 ) ) {
+            $state['status'] = 'failed';
+            $state['error']  = $sb_table . ' does not match: WordPress ' . $t['wp_rows'] . ' rows / ' . li_format_money( $t['wp_cents'] ?? 0 ) . ', Supabase ' . $t['supabase_rows'] . ' rows / ' . li_format_money( $t['supabase_cents'] ?? 0 ) . '.';
+            // Copy again from the start next time; rows already copied are skipped.
+            $state['progress'] = array();
+            update_option( 'li_money_migration', $state, false );
+            return $state;
         }
     }
 
-    if ( 'done' === $report['status'] ) {
-        $report['payouts'] = li_money_migrate_rescue_cents();
-        if ( ! empty( $report['payouts']['failed'] ) ) {
-            $report['status'] = 'failed';
-            $report['error']  = 'Could not save the rescue payout for ' . implode( ', ', $report['payouts']['failed'] ) . '.';
-        }
+    $state['payouts'] = li_money_migrate_rescue_cents();
+    if ( ! empty( $state['payouts']['failed'] ) ) {
+        $state['status'] = 'failed';
+        $state['error']  = 'Could not save the rescue payout for ' . implode( ', ', $state['payouts']['failed'] ) . '.';
+    } else {
+        $state['status'] = 'done';
+        $state['at']     = li_store_now();
+        delete_transient( 'li_shopify_catalog_gaps' );
     }
-    return $report;
+    update_option( 'li_money_migration', $state, false );
+    return $state;
 }
 
 /** Moves each product's rescue payout from the WooCommerce product or the Shopify setting to products.rescue_cents. */
@@ -264,25 +297,52 @@ function li_money_migrate_rescue_cents() {
 
 add_action( 'init', 'li_money_maybe_migrate', 20 );
 function li_money_maybe_migrate() {
-    if ( ! ( is_admin() || wp_doing_cron() ) ) {
+    if ( ! ( is_admin() || wp_doing_cron() ) || wp_doing_ajax() ) {
         return;
     }
     $state = get_option( 'li_money_migration', array() );
-    if ( 'done' === ( $state['status'] ?? '' ) ) {
+    if ( 'done' === ( $state['status'] ?? '' ) || '' === li_service_key() ) {
         return;
     }
-    if ( get_transient( 'li_money_migrating' ) || '' === li_service_key() ) {
+    if ( ! wp_next_scheduled( 'li_money_migrate_cron' ) ) {
+        wp_schedule_single_event( time() + 60, 'li_money_migrate_cron' );
+    }
+    if ( wp_doing_cron() || get_transient( 'li_money_migrate_lock' ) ) {
         return;
     }
-    set_transient( 'li_money_migrating', 1, 'failed' === ( $state['status'] ?? '' ) ? HOUR_IN_SECONDS : 10 * MINUTE_IN_SECONDS );
-    $report = li_money_migrate_from_wordpress();
-    update_option( 'li_money_migration', $report, false );
-    if ( 'done' === $report['status'] ) {
-        delete_transient( 'li_money_migrating' );
-        li_audit_log( 'money_moved_to_supabase', $report );
-    } else {
-        li_notify_admin( 'Larry Impact: moving money records to Supabase failed', $report['error'] . "\n\nNothing was deleted from WordPress. It will try again in an hour.\n\n" . admin_url( 'admin.php?page=li-order-health' ) );
+    if ( 'failed' === ( $state['status'] ?? '' ) && get_transient( 'li_money_migrate_wait' ) ) {
+        return;
     }
+    li_money_run_step( 10 );
+}
+
+add_action( 'li_money_migrate_cron', 'li_money_migrate_cron' );
+function li_money_migrate_cron() {
+    $state = get_option( 'li_money_migration', array() );
+    if ( 'done' === ( $state['status'] ?? '' ) || get_transient( 'li_money_migrate_lock' ) ) {
+        return;
+    }
+    li_money_run_step( 40 );
+    $state = get_option( 'li_money_migration', array() );
+    if ( 'done' !== ( $state['status'] ?? '' ) ) {
+        wp_schedule_single_event( time() + 60, 'li_money_migrate_cron' );
+    }
+}
+
+function li_money_run_step( $budget ) {
+    set_transient( 'li_money_migrate_lock', 1, 3 * MINUTE_IN_SECONDS );
+    $state = li_money_migrate_step( $budget );
+    delete_transient( 'li_money_migrate_lock' );
+    if ( 'done' === $state['status'] ) {
+        li_audit_log( 'money_moved_to_supabase', array( 'tables' => $state['tables'], 'payouts' => $state['payouts'] ?? array() ) );
+    } elseif ( 'failed' === $state['status'] ) {
+        set_transient( 'li_money_migrate_wait', 1, 15 * MINUTE_IN_SECONDS );
+        if ( ! get_transient( 'li_money_migrate_mailed' ) ) {
+            set_transient( 'li_money_migrate_mailed', 1, DAY_IN_SECONDS );
+            li_notify_admin( 'Larry Impact: moving money records to Supabase needs a look', $state['error'] . "\n\nNothing was deleted from WordPress. It will try again in 15 minutes.\n\n" . admin_url( 'admin.php?page=li-order-health' ) );
+        }
+    }
+    return $state;
 }
 
 add_action( 'admin_notices', 'li_money_migration_notice' );
@@ -292,7 +352,12 @@ function li_money_migration_notice() {
     }
     $state = get_option( 'li_money_migration', array() );
     if ( 'failed' === ( $state['status'] ?? '' ) ) {
-        echo '<div class="notice notice-error"><p><strong>Larry Impact:</strong> moving the money records to Supabase did not finish: ' . esc_html( $state['error'] ?? '' ) . ' Nothing was deleted. It will try again in an hour.</p></div>';
+        echo '<div class="notice notice-error"><p><strong>Larry Impact:</strong> moving the money records to Supabase did not finish: ' . esc_html( $state['error'] ?? '' ) . ' Nothing was deleted. It will try again in 15 minutes.</p></div>';
+        return;
+    }
+    if ( 'running' === ( $state['status'] ?? '' ) ) {
+        $done = count( array_filter( (array) ( $state['progress'] ?? array() ), function( $p ) { return ! empty( $p['done'] ); } ) );
+        echo '<div class="notice notice-info"><p><strong>Larry Impact:</strong> moving the money records to Supabase (' . intval( $done ) . ' of ' . count( li_money_tables_map() ) . ' tables copied). Order history and reports fill in as it finishes.</p></div>';
         return;
     }
     if ( 'done' !== ( $state['status'] ?? '' ) || strtotime( $state['at'] ?? '' ) < time() - 7 * DAY_IN_SECONDS ) {
@@ -301,7 +366,7 @@ function li_money_migration_notice() {
     $parts = array();
     foreach ( (array) ( $state['tables'] ?? array() ) as $table => $t ) {
         if ( $t['wp_rows'] ) {
-            $parts[] = $table . ' ' . intval( $t['supabase_rows'] ) . '/' . intval( $t['wp_rows'] );
+            $parts[] = $table . ' ' . intval( $t['supabase_rows'] ) . ' of ' . intval( $t['wp_rows'] ) . ' rows' . ( isset( $t['wp_cents'] ) ? ' (' . li_format_money( $t['supabase_cents'] ) . ' of ' . li_format_money( $t['wp_cents'] ) . ')' : '' );
         }
     }
     $page = sanitize_key( $_GET['page'] ?? '' );
