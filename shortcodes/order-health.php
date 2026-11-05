@@ -56,40 +56,38 @@ function li_order_events_table() {
 }
 
 function li_order_event_get( $event_id ) {
-    global $wpdb;
-    return $wpdb->get_row( $wpdb->prepare( 'SELECT * FROM ' . li_order_events_table() . ' WHERE id = %d', $event_id ) );
+    $row = li_store_first( 'order_events', 'id=eq.' . intval( $event_id ) );
+    return $row ? (object) $row : null;
 }
 
 function li_order_event_get_by_external( $source, $external_id ) {
-    global $wpdb;
     if ( '' === (string) $external_id ) {
         return null;
     }
-    return $wpdb->get_row( $wpdb->prepare( 'SELECT * FROM ' . li_order_events_table() . ' WHERE source = %s AND external_id = %s ORDER BY id DESC LIMIT 1', $source, $external_id ) );
+    $row = li_store_first( 'order_events', 'source=eq.' . urlencode( $source ) . '&external_id=eq.' . urlencode( (string) $external_id ) . '&order=id.desc' );
+    return $row ? (object) $row : null;
 }
 
 function li_order_event_save( $data ) {
-    global $wpdb;
     $source      = sanitize_key( $data['source'] ?? 'shopify' );
     $external_id = sanitize_text_field( (string) ( $data['external_id'] ?? '' ) );
-    $now         = current_time( 'mysql' );
+    $now         = li_store_now();
     $row         = array(
-        'source'     => $source,
-        'topic'      => sanitize_text_field( $data['topic'] ?? '' ),
-        'external_id'=> $external_id,
-        'order_ref'  => sanitize_text_field( $data['order_ref'] ?? '' ),
-        'signature'  => sanitize_key( $data['signature'] ?? '' ),
-        'payload'    => wp_json_encode( $data['payload'] ?? array() ),
-        'updated_at' => $now,
+        'source'      => $source,
+        'topic'       => sanitize_text_field( $data['topic'] ?? '' ),
+        'external_id' => $external_id,
+        'order_ref'   => sanitize_text_field( $data['order_ref'] ?? '' ),
+        'signature'   => sanitize_key( $data['signature'] ?? '' ),
+        'payload'     => wp_json_encode( $data['payload'] ?? array() ),
+        'updated_at'  => $now,
     );
     $existing = li_order_event_get_by_external( $source, $external_id );
     if ( $existing ) {
-        $wpdb->update( li_order_events_table(), $row, array( 'id' => $existing->id ) );
+        li_store_update( 'order_events', 'id=eq.' . intval( $existing->id ), $row );
         return intval( $existing->id );
     }
     $row['created_at'] = $now;
-    $wpdb->insert( li_order_events_table(), $row );
-    return intval( $wpdb->insert_id );
+    return li_store_insert( 'order_events', $row );
 }
 
 function li_order_outcome_result( $outcome ) {
@@ -116,20 +114,16 @@ function li_order_event_finish( $event_id, $outcome ) {
     $dismissed  = $is_problem && intval( $event->resolved_by ) > 0 && $alert_key === ( $previous['alert_key'] ?? '' );
 
     $outcome['alert_key'] = $alert_key;
-    $now = current_time( 'mysql' );
-    $wpdb->update(
-        li_order_events_table(),
-        array(
-            'result'      => $result,
-            'details'     => wp_json_encode( $outcome ),
-            'attempts'    => intval( $event->attempts ) + 1,
-            'updated_at'  => $now,
-            'resolved'    => ( ! $is_problem || $dismissed ) ? 1 : 0,
-            'resolved_at' => ( ! $is_problem || $dismissed ) ? $now : null,
-            'resolved_by' => $dismissed ? intval( $event->resolved_by ) : 0,
-        ),
-        array( 'id' => $event_id )
-    );
+    $now = li_store_now();
+    li_store_update( 'order_events', 'id=eq.' . intval( $event_id ), array(
+        'result'      => $result,
+        'details'     => wp_json_encode( $outcome ),
+        'attempts'    => intval( $event->attempts ) + 1,
+        'updated_at'  => $now,
+        'resolved'    => ( ! $is_problem || $dismissed ),
+        'resolved_at' => ( ! $is_problem || $dismissed ) ? $now : null,
+        'resolved_by' => $dismissed ? intval( $event->resolved_by ) : 0,
+    ) );
 
     if ( $is_problem && ! $dismissed && $alert_key !== ( $previous['alert_key'] ?? '' ) ) {
         li_order_health_alert( $outcome );
@@ -185,12 +179,7 @@ function li_order_health_alert( $outcome ) {
 }
 
 function li_order_health_unresolved_count() {
-    global $wpdb;
-    $table = li_order_events_table();
-    if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) !== $table ) {
-        return 0;
-    }
-    return intval( $wpdb->get_var( "SELECT COUNT(*) FROM {$table} WHERE resolved = 0 AND result IN ('needs_attention','failed')" ) );
+    return count( li_store_select( 'order_events', 'select=id&resolved=eq.false&result=in.(needs_attention,failed)&limit=1000' ) );
 }
 
 add_action( 'admin_notices', 'li_order_health_admin_notice' );
@@ -775,7 +764,7 @@ function li_order_health_handle_post() {
     }
 
     if ( 'dismiss' === $action && $event_id ) {
-        $wpdb->update( li_order_events_table(), array( 'resolved' => 1, 'resolved_at' => current_time( 'mysql' ), 'resolved_by' => get_current_user_id() ), array( 'id' => $event_id ) );
+        li_store_update( 'order_events', 'id=eq.' . intval( $event_id ), array( 'resolved' => true, 'resolved_at' => li_store_now(), 'resolved_by' => get_current_user_id() ) );
         li_audit_log( 'order_health_dismissed', array( 'event_id' => $event_id ), 'order', (string) $event_id );
         return '<div class="li-msg-ok">Dismissed.</div>';
     }
@@ -870,7 +859,9 @@ function li_page_order_health() {
     ob_start();
     echo $msg;
 
-    $open = $wpdb->get_results( "SELECT * FROM {$table} WHERE resolved = 0 AND result IN ('needs_attention','failed') ORDER BY created_at DESC LIMIT 100" );
+    echo li_money_check_card();
+
+    $open = li_store_objects( li_store_select( 'order_events', 'resolved=eq.false&result=in.(needs_attention,failed)&order=created_at.desc&limit=100' ) );
     echo '<div class="li-card"><div class="li-card-title">Orders that need attention (' . esc_html( count( $open ) ) . ')</div>';
     if ( ! $open ) {
         echo '<p style="margin:0;color:#3a7a4a">Every order received has been recorded.</p>';
@@ -880,7 +871,7 @@ function li_page_order_health() {
         foreach ( $open as $event ) {
             $details = json_decode( (string) $event->details, true );
             $details = is_array( $details ) ? $details : array();
-            echo '<tr><td>' . esc_html( mysql2date( 'M j, Y g:i a', $event->created_at ) ) . '</td>';
+            echo '<tr><td>' . esc_html( li_store_local_time( $event->created_at, 'M j, Y g:i a' ) ) . '</td>';
             echo '<td><strong>' . esc_html( $event->order_ref ) . '</strong></td>';
             echo '<td>' . implode( '<br>', array_map( 'esc_html', li_order_problem_lines( $details ) ) ) . '</td>';
             echo '<td style="white-space:nowrap">' . li_order_health_form( 'retry', li_order_health_rescue_select(), 'Record order', $event->id );
@@ -938,7 +929,7 @@ function li_page_order_health() {
     echo li_order_health_form( 'manual', $fields, 'Record order', 0, 'li-btn' );
     echo '</div>';
 
-    $recent = $wpdb->get_results( "SELECT * FROM {$table} ORDER BY updated_at DESC LIMIT 50" );
+    $recent = li_store_objects( li_store_select( 'order_events', 'order=updated_at.desc&limit=50' ) );
     echo '<div class="li-card"><div class="li-card-title">Recent orders received</div>';
     if ( ! $recent ) {
         echo '<p style="margin:0">No orders received since Order Health was turned on.</p>';
@@ -949,7 +940,7 @@ function li_page_order_health() {
             $details = json_decode( (string) $event->details, true );
             $details = is_array( $details ) ? $details : array();
             $ok      = in_array( $event->result, array( 'recorded', 'ignored' ), true ) || intval( $event->resolved ) === 1;
-            echo '<tr><td>' . esc_html( mysql2date( 'M j g:i a', $event->updated_at ) ) . '</td>';
+            echo '<tr><td>' . esc_html( li_store_local_time( $event->updated_at, 'M j g:i a' ) ) . '</td>';
             echo '<td>' . esc_html( $event->order_ref ) . '</td>';
             echo '<td>' . esc_html( trim( $event->topic . ' ' . ( $event->signature ? '(' . $event->signature . ')' : '' ) ) ) . '</td>';
             echo '<td>' . esc_html( $details['rescue']['name'] ?? '' ) . '</td>';

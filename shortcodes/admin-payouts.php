@@ -129,7 +129,7 @@ function li_page_payouts() {
                 break;
             case 'rollback':
                 $ok = li_rollback_payout( $id );
-                $notice = $ok ? '<div class="li-msg-ok">Batch rolled back.</div>' : '<div class="li-msg-err">Could not roll back batch.</div>';
+                $notice = $ok ? '<div class="li-msg-ok">Batch rolled back. Its orders are pending again.</div>' : '<div class="li-msg-err">Could not roll back this batch. Batches already sent to Stripe have to be reversed in Stripe.</div>';
                 break;
         }
     }
@@ -180,7 +180,7 @@ function li_page_payouts() {
             if ( $p['status'] === 'completed' ) {
                 $actions[] = '<a href="' . esc_url( wp_nonce_url( admin_url( 'admin.php?page=li-payouts&li_payout_action=archive&payout_id=' . $p['id'] ), 'li_payout_action', 'li_payout_nonce' ) ) . '">Archive</a>';
             }
-            if ( ! in_array( $p['status'], array( 'archived', 'rolled_back' ), true ) ) {
+            if ( ! in_array( $p['status'], array( 'archived', 'rolled_back', 'sending' ), true ) && '' === (string) $p['transfer_id'] ) {
                 $actions[] = '<a href="' . esc_url( wp_nonce_url( admin_url( 'admin.php?page=li-payouts&li_payout_action=rollback&payout_id=' . $p['id'] ), 'li_payout_action', 'li_payout_nonce' ) ) . '" style="color:#b91c1c;">Rollback</a>';
             }
             echo '<tr>';

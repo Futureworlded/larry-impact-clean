@@ -65,5 +65,33 @@ check( "rescue's next payout is reduced by 600", -600 === array_sum( array_colum
 $out = li_process_shopify_refund( array( 'id' => '901', 'order_name' => 'LR-2000', 'refund_line_items' => array( array( 'quantity' => 1, 'subtotal' => '10.00', 'line_item' => array( 'sku' => 'UNKNOWN', 'title' => 'Mystery' ) ) ) ) );
 check( 'refund for an item Larry never credited is flagged, not ignored', 'refund_no_line' === ( $out['skipped'][0]['reason'] ?? '' ) );
 
+echo "Money balance check\n";
+require dirname( __DIR__ ) . '/shortcodes/money-check.php';
+$orders = array(
+    array( 'shopify_order_id' => 'LR-1::a', 'rescue_id' => 'r1', 'sale_amount_cents' => 3199, 'rescue_split_cents' => 600, 'larry_split_cents' => 2599, 'status' => 'paid' ),
+    array( 'shopify_order_id' => 'LR-2::a', 'rescue_id' => 'r1', 'sale_amount_cents' => 3199, 'rescue_split_cents' => 600, 'larry_split_cents' => 2599, 'status' => 'pending' ),
+    array( 'shopify_order_id' => 'LR-1::a::refund-9', 'rescue_id' => 'r1', 'sale_amount_cents' => -1600, 'rescue_split_cents' => -300, 'larry_split_cents' => -1300, 'status' => 'pending' ),
+);
+$batches = array( array( 'id' => 5, 'rescue_id' => 'r1', 'amount_cents' => 600, 'status' => 'completed', 'transfer_id' => 'tr_1', 'created_at' => '2026-11-01T00:00:00Z' ) );
+$lines   = array( array( 'payout_id' => 5, 'order_ref' => 'LR-1::a', 'amount_cents' => 600 ) );
+$c = li_money_check_problems( $orders, $batches, $lines );
+check( 'balanced books have no problems', array() === $c['problems'] );
+check( 'earned 900, in payouts 600, owed 300 after the refund', 900 === $c['rescues']['r1']['earned'] && 600 === $c['rescues']['r1']['in_payouts'] && 300 === $c['rescues']['r1']['owed'] );
+$c = li_money_check_problems( $orders, array_merge( $batches, array( array( 'id' => 6, 'rescue_id' => 'r1', 'amount_cents' => 600, 'status' => 'completed', 'transfer_id' => 'tr_2', 'created_at' => '' ) ) ), array_merge( $lines, array( array( 'payout_id' => 6, 'order_ref' => 'LR-1::a', 'amount_cents' => 600 ) ) ) );
+check( 'an order paid twice is caught', (bool) preg_grep( '/in 2 payout batches/', $c['problems'] ) );
+$o2 = $orders; $o2[0]['status'] = 'pending';
+$c = li_money_check_problems( $o2, $batches, $lines );
+check( 'a paid order put back to pending is caught', (bool) preg_grep( '/could be paid again/', $c['problems'] ) );
+$c = li_money_check_problems( $orders, array( array( 'id' => 5, 'rescue_id' => 'r1', 'amount_cents' => 700, 'status' => 'completed', 'transfer_id' => 'tr_1', 'created_at' => '' ) ), $lines );
+check( 'a batch that does not match its orders is caught', (bool) preg_grep( '/batch #5 is/', $c['problems'] ) );
+$o3 = $orders; $o3[] = array( 'shopify_order_id' => 'LR-1::a::refund-10', 'rescue_id' => 'r1', 'sale_amount_cents' => -2000, 'rescue_split_cents' => -400, 'larry_split_cents' => -1600, 'status' => 'pending' );
+$c = li_money_check_problems( $o3, $batches, $lines );
+check( 'refunding more than the sale is caught', (bool) preg_grep( '/refunded more than/', $c['problems'] ) );
+$o4 = $orders; $o4[1]['rescue_split_cents'] = 3000;
+$c = li_money_check_problems( $o4, $batches, $lines );
+check( 'shares larger than the sale are caught', (bool) preg_grep( '/more than the sale/', $c['problems'] ) );
+$c = li_money_check_problems( $orders, array( array( 'id' => 5, 'rescue_id' => 'r1', 'amount_cents' => 600, 'status' => 'sending', 'transfer_id' => '', 'created_at' => '2026-11-01T00:00:00Z' ) ), $lines, strtotime( '2026-11-01T03:00:00Z' ) );
+check( 'a payout stuck sending to Stripe is caught', (bool) preg_grep( '/sending to Stripe/', $c['problems'] ) );
+
 echo $GLOBALS['li_test_failures'] ? "\n{$GLOBALS['li_test_failures']} failed\n" : "\nAll passed\n";
 exit( $GLOBALS['li_test_failures'] ? 1 : 0 );
