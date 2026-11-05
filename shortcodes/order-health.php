@@ -153,6 +153,8 @@ function li_order_problem_lines( $outcome ) {
     foreach ( (array) ( $outcome['skipped'] ?? array() ) as $line ) {
         if ( 'no_sku' === ( $line['reason'] ?? '' ) ) {
             $lines[] = 'Product has no SKU in Shopify: ' . ( $line['title'] ?? '' );
+        } elseif ( 'no_payout' === ( $line['reason'] ?? '' ) ) {
+            $lines[] = 'No rescue payout set yet for ' . ( $line['title'] ?? '' ) . ' (SKU ' . ( $line['sku'] ?? '' ) . '). Set it in Split Config, then click Retry.';
         } else {
             $lines[] = 'Product is not in the Larry product list: ' . ( $line['title'] ?? '' ) . ' (SKU ' . ( $line['sku'] ?? '' ) . ')';
         }
@@ -285,6 +287,7 @@ function li_shopify_order_lines( $payload ) {
         $lines[] = array(
             'sku'        => sanitize_text_field( (string) ( $line['sku'] ?? '' ) ),
             'title'      => sanitize_text_field( $title ),
+            'unit_cents' => intval( round( $price * 100 ) ),
             'qty'        => $qty,
             'sale_cents' => intval( round( max( 0, ( $price * $qty ) - $discount ) * 100 ) ),
         );
@@ -367,6 +370,23 @@ function li_process_shopify_order( $payload, $context = array() ) {
             continue;
         }
         $product = '' !== $line['sku'] ? li_get_product_by_sku( $line['sku'] ) : null;
+        if ( ! $product && '' !== $line['sku'] && ! $is_bundle && ! li_is_woo_sku( $line['sku'] ) ) {
+            $product = li_upsert_shopify_product( $line['sku'], $line['title'], $line['unit_cents'] ?? 0 );
+            if ( $product ) {
+                $known = get_option( 'li_shopify_skus', array() );
+                $known = is_array( $known ) ? $known : array();
+                if ( ! in_array( $line['sku'], $known, true ) ) {
+                    $known[] = $line['sku'];
+                    update_option( 'li_shopify_skus', $known, false );
+                }
+            }
+        }
+        if ( $product && li_is_shopify_only_sku( $line['sku'] ) && ! li_product_has_payout( $product ) ) {
+            $line['reason']       = 'no_payout';
+            $outcome['skipped'][] = $line;
+            li_log( 'Shopify order ' . $order_ref . ' line held: no rescue payout set for SKU ' . $line['sku'] );
+            continue;
+        }
         if ( ! $product ) {
             $line['reason']        = '' === $line['sku'] ? 'no_sku' : 'unknown_sku';
             $outcome['skipped'][] = $line;
@@ -680,6 +700,7 @@ function li_schedule_shopify_catalog_check() {
 
 add_action( 'li_shopify_catalog_cron', 'li_shopify_catalog_cron' );
 function li_shopify_catalog_cron() {
+    li_shopify_sync_products();
     $gaps = li_shopify_catalog_gaps();
     if ( is_wp_error( $gaps ) ) {
         li_log( 'Shopify product check failed: ' . $gaps->get_error_message() );
@@ -743,6 +764,15 @@ function li_order_health_handle_post() {
             return '<div class="li-msg-err">' . esc_html( $summary['error'] ) . '</div>';
         }
         return '<div class="li-msg-ok">Checked ' . esc_html( $summary['checked'] ) . ' paid Shopify orders. Newly recorded: ' . esc_html( $summary['recorded'] ) . '. Need attention: ' . esc_html( $summary['problems'] ) . '.</div>';
+    }
+
+    if ( 'sync_products' === $action ) {
+        $sync = li_shopify_sync_products();
+        if ( is_wp_error( $sync ) ) {
+            return '<div class="li-msg-err">' . esc_html( $sync->get_error_message() ) . '</div>';
+        }
+        li_shopify_catalog_gaps();
+        return '<div class="li-msg-ok">Read ' . esc_html( $sync['variants'] ) . ' Shopify products. Newly added to Larry: ' . esc_html( $sync['added'] ) . '.</div>';
     }
 
     if ( 'catalog' === $action ) {
@@ -823,7 +853,7 @@ function li_page_order_health() {
     if ( ! $open ) {
         echo '<p style="margin:0;color:#3a7a4a">Every order received has been recorded.</p>';
     } else {
-        echo '<p class="li-hint" style="margin-top:0">If a product is missing, add it as a hidden WooCommerce product with the same SKU and a rescue payout, then click Record order.</p>';
+        echo '<p class="li-hint" style="margin-top:0">If a rescue payout is missing, set it in Split Config, then click Record order. New Shopify products are added to Larry automatically.</p>';
         echo '<div class="li-table-wrap"><table class="li-table"><thead><tr><th>Received</th><th>Order</th><th>Problem</th><th>Action</th></tr></thead><tbody>';
         foreach ( $open as $event ) {
             $details = json_decode( (string) $event->details, true );
@@ -854,7 +884,12 @@ function li_page_order_health() {
     echo '</div>';
 
     echo '<div class="li-card"><div class="li-card-title">Shopify products</div>';
-    echo '<p class="li-hint" style="margin-top:0">Checked every day. An email goes out when a product for sale in Shopify is missing from Larry or has no rescue payout.</p>';
+    echo '<p class="li-hint" style="margin-top:0">New Shopify products are added to Larry every hour. Set each one&rsquo;s rescue payout in Split Config. Checked every day: an email goes out when a product for sale in Shopify has no rescue payout.</p>';
+    $sync_last = get_option( 'li_shopify_product_sync_last', array() );
+    if ( ! empty( $sync_last['run_at'] ) ) {
+        echo '<p style="margin-top:0">Last product sync: ' . esc_html( wp_date( 'M j, Y g:i a', intval( $sync_last['run_at'] ) ) ) . ' &middot; ' . esc_html( $sync_last['variants'] ) . ' Shopify products read</p>';
+    }
+    echo li_order_health_form( 'sync_products', '', 'Sync products now', 0, 'li-btn li-btn-sm' ) . ' ';
     echo li_order_health_form( 'catalog', '', 'Check now', 0, 'li-btn li-btn-sm' );
     $catalog = get_transient( 'li_shopify_catalog_gaps' );
     if ( is_array( $catalog ) ) {
