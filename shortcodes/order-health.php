@@ -151,7 +151,11 @@ function li_order_problem_lines( $outcome ) {
         }
     }
     foreach ( (array) ( $outcome['skipped'] ?? array() ) as $line ) {
-        if ( 'no_sku' === ( $line['reason'] ?? '' ) ) {
+        if ( 'refund_no_order' === ( $line['reason'] ?? '' ) ) {
+            $lines[] = 'A Shopify refund (' . ( $line['title'] ?? '' ) . ') could not be matched to a Larry order. Check whether the rescue share needs to be taken back by hand.';
+        } elseif ( 'refund_no_line' === ( $line['reason'] ?? '' ) ) {
+            $lines[] = 'Refunded item was never credited in Larry, or is part of a bundle: ' . ( $line['title'] ?? '' ) . ' (SKU ' . ( $line['sku'] ?? '' ) . '). Check whether the rescue share needs to be taken back by hand.';
+        } elseif ( 'no_sku' === ( $line['reason'] ?? '' ) ) {
             $lines[] = 'Product has no SKU in Shopify: ' . ( $line['title'] ?? '' );
         } elseif ( 'no_payout' === ( $line['reason'] ?? '' ) ) {
             $lines[] = 'No rescue payout set yet for ' . ( $line['title'] ?? '' ) . ' (SKU ' . ( $line['sku'] ?? '' ) . '). Set it in Split Config, then click Retry.';
@@ -544,12 +548,15 @@ function li_shopify_reconcile( $days = 0 ) {
                     discountAllocations { allocatedAmountSet { shopMoney { amount } } }
                     customAttributes { key value }
                 } }
+                refunds { legacyResourceId createdAt refundLineItems(first: 100) { nodes {
+                    quantity subtotalSet { shopMoney { amount } } lineItem { sku title }
+                } } }
             }
         }
     }';
     $last  = get_option( 'li_shopify_reconcile_last', array() );
     $since = $days > 0 ? time() - $days * DAY_IN_SECONDS : ( ! empty( $last['ok_at'] ) ? intval( $last['ok_at'] ) - 2 * DAY_IN_SECONDS : time() - 60 * DAY_IN_SECONDS );
-    $q     = '(financial_status:paid OR financial_status:partially_refunded) created_at:>=' . gmdate( 'Y-m-d\TH:i:s\Z', $since );
+    $q     = '(financial_status:paid OR financial_status:partially_refunded OR financial_status:refunded) updated_at:>=' . gmdate( 'Y-m-d\TH:i:s\Z', $since );
 
     $summary = array( 'run_at' => time(), 'checked' => 0, 'recorded' => 0, 'problems' => 0, 'error' => '' );
     $cursor  = null;
@@ -562,8 +569,19 @@ function li_shopify_reconcile( $days = 0 ) {
         foreach ( (array) ( $data['orders']['nodes'] ?? array() ) as $node ) {
             $summary['checked']++;
             $payload  = li_shopify_graphql_order_to_payload( $node );
+            foreach ( (array) ( $node['refunds'] ?? array() ) as $refund_node ) {
+                $refund = li_shopify_graphql_refund_to_payload( $payload['id'], $payload['name'], $refund_node );
+                $seen   = li_order_event_get_by_external( 'shopify_refund', $refund['id'] );
+                if ( $refund['id'] && ! ( $seen && intval( $seen->resolved ) === 1 ) ) {
+                    li_ingest_shopify_refund( $refund, array( 'topic' => 'scheduled check', 'signature' => 'api' ) );
+                }
+            }
             $existing = li_order_event_get_by_external( 'shopify', $payload['id'] );
             if ( $existing && intval( $existing->resolved ) === 1 ) {
+                continue;
+            }
+            if ( 'refunded' === $payload['financial_status'] && ! $existing ) {
+                // Fully refunded before Larry saw it: nothing to credit.
                 continue;
             }
             $result = li_ingest_shopify_order( $payload, array(
@@ -741,11 +759,15 @@ function li_order_health_handle_post() {
         if ( ! is_array( $payload ) ) {
             return '<div class="li-msg-err">That order could not be loaded.</div>';
         }
-        $result = li_ingest_shopify_order( $payload, array(
-            'topic'           => $event->topic,
-            'signature'       => $event->signature,
-            'rescue_override' => sanitize_text_field( $_POST['rescue_override'] ?? '' ),
-        ) );
+        if ( 'shopify_refund' === $event->source ) {
+            $result = li_ingest_shopify_refund( $payload, array( 'topic' => $event->topic, 'signature' => $event->signature ) );
+        } else {
+            $result = li_ingest_shopify_order( $payload, array(
+                'topic'           => $event->topic,
+                'signature'       => $event->signature,
+                'rescue_override' => sanitize_text_field( $_POST['rescue_override'] ?? '' ),
+            ) );
+        }
         li_audit_log( 'order_health_retry', array( 'event_id' => $event_id, 'result' => $result ), 'order', $event->order_ref );
         return 'recorded' === $result
             ? '<div class="li-msg-ok">Order ' . esc_html( $event->order_ref ) . ' is now recorded.</div>'
