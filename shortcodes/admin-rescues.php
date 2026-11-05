@@ -573,7 +573,33 @@ add_action( 'rest_api_init', function() {
         'callback' => 'li_rest_rescue_shipping',
         'permission_callback' => '__return_true',
     ) );
+    register_rest_route( 'larry-impact/v1', '/rescues', array(
+        'methods' => 'GET',
+        'callback' => 'li_rest_public_rescues',
+        'permission_callback' => '__return_true',
+    ) );
 } );
+// Public list for the Shopify cart picker: approved rescues, name/slug only.
+function li_rest_public_rescues() {
+    $list = get_transient( 'li_public_rescues' );
+    if ( false === $list ) {
+        $rows = li_db_get( 'rescues?status=in.(approved,active)&select=id,name,slug,address,city,state&order=name.asc' );
+        $list = array();
+        foreach ( (array) $rows as $r ) {
+            if ( empty( $r['slug'] ) || empty( $r['name'] ) ) continue;
+            $s = li_rescue_shipping_data( $r );
+            $list[] = array(
+                'name'       => (string) $r['name'],
+                'slug'       => (string) $r['slug'],
+                'ship_ready' => ! empty( $s['address1'] ) && ! empty( $s['city'] ) && ! empty( $s['state'] ) && (bool) preg_match( '/^\d{5}(?:-\d{4})?$/', (string) $s['zip'] ),
+            );
+        }
+        if ( ! empty( $list ) ) set_transient( 'li_public_rescues', $list, 5 * MINUTE_IN_SECONDS );
+    }
+    $response = rest_ensure_response( $list );
+    $response->header( 'Cache-Control', 'public, max-age=300' );
+    return $response;
+}
 function li_rest_rescue_shipping( $request ) {
     $slug = sanitize_title( $request['slug'] ?? '' );
     $rows = li_db_get( 'rescues?slug=eq.' . urlencode( $slug ) . '&select=*' );

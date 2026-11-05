@@ -103,8 +103,8 @@ function li_create_rescue_pages() {
         LI_DB_URL . '/rest/v1/rescues?select=id,name,slug,city,state,mission,about,website,email,phone,ein,status,logo_url,hero_photo_url&order=name.asc',
         [
             'headers' => [
-                'apikey'        => LI_DB_KEY,
-                'Authorization' => 'Bearer ' . LI_DB_KEY,
+                'apikey'        => li_service_key(),
+                'Authorization' => 'Bearer ' . li_service_key(),
             ],
             'timeout' => 15,
         ]
@@ -218,8 +218,8 @@ function li_rescue_public_shortcode( $atts ) {
         LI_DB_URL . '/rest/v1/rescues?id=eq.' . urlencode( $id ) . '&select=id,name,slug,city,state,mission,about,website,email,phone,ein,status,logo_url,hero_photo_url&limit=1',
         [
             'headers' => [
-                'apikey'        => LI_DB_KEY,
-                'Authorization' => 'Bearer ' . LI_DB_KEY,
+                'apikey'        => li_service_key(),
+                'Authorization' => 'Bearer ' . li_service_key(),
             ],
             'timeout' => 10,
         ]
