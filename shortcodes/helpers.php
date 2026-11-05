@@ -524,12 +524,10 @@ function li_get_product_rescue_cents( $product ) {
     if ( empty( $product['sku'] ) ) {
         return 0;
     }
-    if ( ! function_exists( 'wc_get_product_id_by_sku' ) ) {
-        return 0;
-    }
-    $wp_id = wc_get_product_id_by_sku( $product['sku'] );
+    $wp_id = function_exists( 'wc_get_product_id_by_sku' ) ? wc_get_product_id_by_sku( $product['sku'] ) : 0;
     if ( ! $wp_id ) {
-        return 0;
+        $payouts = function_exists( 'li_shopify_payouts' ) ? li_shopify_payouts() : array();
+        return isset( $payouts[ $product['sku'] ] ) ? max( 0, intval( $payouts[ $product['sku'] ] ) ) : 0;
     }
     $meta = get_post_meta( $wp_id, '_li_rescue_cents', true );
     if ( '' === $meta ) {
@@ -615,7 +613,7 @@ function li_deactivate_orphan_products() {
             if ( isset( $p['active'] ) && $p['active'] === false ) {
                 continue;
             }
-            if ( in_array( $sku, $wc_skus, true ) ) {
+            if ( in_array( $sku, $wc_skus, true ) || ( function_exists( 'li_shopify_skus' ) && in_array( $sku, li_shopify_skus(), true ) ) ) {
                 continue;
             }
             $r = li_db_patch( 'products?id=eq.' . urlencode( $p['id'] ), array( 'active' => false ) );
