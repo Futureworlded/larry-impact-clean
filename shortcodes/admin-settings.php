@@ -22,6 +22,8 @@ function li_page_settings() {
         update_option( 'li_shopify_webhook_secret', sanitize_text_field( $_POST['li_shopify_webhook_secret'] ?? '' ) );
         update_option( 'li_shopify_store',  sanitize_text_field( $_POST['li_shopify_store'] ?? '' ) );
         update_option( 'li_shopify_admin_token', sanitize_text_field( $_POST['li_shopify_admin_token'] ?? '' ), false );
+        update_option( 'li_homepage_from_shopify', isset( $_POST['li_homepage_from_shopify'] ) ? 1 : 0 );
+        delete_transient( 'li_shopify_storefront' );
         $msg = '<div class="li-msg-ok">Settings saved.</div>';
     }
     ob_start();
@@ -65,6 +67,8 @@ function li_page_settings() {
     echo '<div class="li-row"><div class="li-field"><label class="li-label">Admin API access token</label>';
     echo '<input class="li-input" type="password" name="li_shopify_admin_token" autocomplete="off" value="' . esc_attr( get_option( 'li_shopify_admin_token', '' ) ) . '" />';
     echo '<div class="li-hint">From a Shopify custom app with read_orders and read_products. Lets Order Health check paid orders every hour.</div></div></div>';
+    echo '<div class="li-row"><div class="li-field"><label class="li-label"><input type="checkbox" name="li_homepage_from_shopify" value="1" ' . checked( li_homepage_from_shopify(), true, false ) . ' /> Homepage products come from Shopify</label>';
+    echo '<div class="li-hint">The homepage ImpactList section shows Shopify products tagged homepage-featured, and the Merch tiles show Shopify design collections. New ones appear within the hour. Turn on at switch-over.</div></div></div>';
     echo '<div style="background:#f9f7f4;border:1px solid #e8e3db;border-radius:8px;padding:14px 16px;font-size:12px;color:#6b6560;line-height:1.6;">Webhook endpoint: <code>' . esc_url( home_url( '/wp-json/larry-impact/v1/shopify-webhook' ) ) . '</code></div></div>';
     echo '<div class="li-card"><div class="li-card-title">Email</div>';
     echo '<div class="li-row"><div class="li-field"><label class="li-label">From name</label>';
