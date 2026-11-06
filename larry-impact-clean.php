@@ -56,6 +56,7 @@ $files = array(
     'money-store.php',
     'money-check.php',
     'shopify-storefront.php',
+    'image-limits.php',
     'media-upload.php',
     'rescue-modal.php',
     'stripe-webhook.php',
