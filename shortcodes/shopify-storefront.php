@@ -75,7 +75,7 @@ function li_storefront_products_html( $products, $columns ) {
         $pos    = 0 === $i % $columns ? ' first' : ( $columns - 1 === $i % $columns ? ' last' : '' );
         $html  .= '<li class="product type-product' . $pos . ' instock has-post-thumbnail product-type-external">';
         $html  .= '<a href="' . esc_url( $url ) . '" class="woocommerce-LoopProduct-link woocommerce-loop-product__link" rel="nofollow">';
-        $html  .= '<img decoding="async" loading="lazy" width="300" height="375" style="aspect-ratio:4/5;object-fit:contain;background:#fff" src="' . esc_url( li_storefront_image( $img ) ) . '" class="attachment-woocommerce_thumbnail size-woocommerce_thumbnail" alt="' . esc_attr( $p['title'] ) . '">';
+        $html  .= '<img decoding="async" loading="lazy" width="300" height="300" style="aspect-ratio:1/1;object-fit:contain;background:#fff" src="' . esc_url( li_storefront_image( $img ) ) . '" class="attachment-woocommerce_thumbnail size-woocommerce_thumbnail" alt="' . esc_attr( $p['title'] ) . '">';
         $html  .= '<h2 class="woocommerce-loop-product__title">' . esc_html( $p['title'] ) . '</h2> ';
         $html  .= '<span class="price"><span class="woocommerce-Price-amount amount"><bdi><span class="woocommerce-Price-currencySymbol">' . esc_html( li_currency_symbol() ) . '</span>' . esc_html( number_format( $price, 2 ) ) . '</bdi></span></span> </a>';
         $html  .= '<a href="' . esc_url( $url ) . '" class="button product_type_external" rel="nofollow" aria-label="DETAILS">DETAILS</a></li>';
