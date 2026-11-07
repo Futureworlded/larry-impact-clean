@@ -333,7 +333,7 @@ function li_rescue_modal_output() {
             <button class="li-modal-close" onclick="liModalSkip()" aria-label="Close">×</button>
             <p class="li-modal-eyebrow">🐾 Before You Shop</p>
             <h2 class="li-modal-title">Choose a Rescue to Support</h2>
-            <p class="li-modal-sub">Every purchase earns revenue and ownership points for your chosen rescue. 55% of net profits go directly to them.</p>
+            <p class="li-modal-sub">Every purchase earns revenue and ownership points for your chosen rescue. At least 55% of net proceeds from eligible purchases go directly to the rescue you choose.</p>
 
             <div class="li-modal-rescues" id="liModalRescues">
                 <div class="li-modal-loading">Loading rescue partners...</div>
