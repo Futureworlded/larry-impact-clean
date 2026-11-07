@@ -212,6 +212,19 @@ function li_rescue_modal_output() {
         cursor: pointer; background: none; border: none; line-height: 1; padding: 4px;
     }
     .li-modal-close:hover { color: #1a1a1a; }
+    /* Keep the theme's button hover/focus styles from moving or restyling the close button. */
+    #liRescueModal .li-modal-close,
+    #liRescueModal .li-modal-close:hover,
+    #liRescueModal .li-modal-close:focus,
+    #liRescueModal .li-modal-close:active {
+        position: absolute !important; top: 14px !important; right: 18px !important; left: auto !important; bottom: auto !important;
+        margin: 0 !important; width: auto !important; height: auto !important; min-width: 0 !important; float: none !important;
+        font-size: 24px !important; line-height: 1 !important; padding: 4px 8px !important; text-transform: none !important;
+        background: none !important; border: none !important; box-shadow: none !important; transform: none !important;
+        color: #aaa !important; z-index: 2 !important; cursor: pointer !important;
+    }
+    #liRescueModal .li-modal-close:hover,
+    #liRescueModal .li-modal-close:focus-visible { color: #1a1a1a !important; }
     .li-modal-eyebrow {
         font-size: 11px; font-weight: 900; letter-spacing: 3px;
         text-transform: uppercase; color: #CEA83D; margin: 0 0 10px;
