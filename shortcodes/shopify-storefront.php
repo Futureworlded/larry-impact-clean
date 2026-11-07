@@ -55,10 +55,25 @@ function li_storefront_data() {
         set_transient( 'li_shopify_storefront', $last, 5 * MINUTE_IN_SECONDS );
         return $last;
     }
-    $data = array( 'products' => $products, 'collections' => (array) ( $collections['collections'] ?? array() ), 'at' => time() );
+    $featured = li_storefront_fetch( '/collections/' . li_storefront_featured_collection() . '/products.json?limit=250' );
+    $data     = array(
+        'products'    => $products,
+        'collections' => (array) ( $collections['collections'] ?? array() ),
+        'featured'    => array_column( (array) ( $featured['products'] ?? array() ), 'handle' ),
+        'at'          => time(),
+    );
     update_option( 'li_shopify_storefront_last', $data, false );
     set_transient( 'li_shopify_storefront', $data, HOUR_IN_SECONDS );
     return $data;
+}
+
+/** Shopify collection whose manual sort order sets the order of the homepage ImpactList products. */
+function li_storefront_featured_collection() {
+    return apply_filters( 'li_storefront_featured_collection', 'homepage-featured' );
+}
+
+function li_storefront_price_html( $amount ) {
+    return '<span class="woocommerce-Price-amount amount"><bdi><span class="woocommerce-Price-currencySymbol">' . esc_html( li_currency_symbol() ) . '</span>' . esc_html( number_format( $amount, 2 ) ) . '</bdi></span>';
 }
 
 function li_storefront_image( $src, $width = 600 ) {
@@ -70,14 +85,15 @@ function li_storefront_products_html( $products, $columns ) {
     foreach ( array_values( $products ) as $i => $p ) {
         $url    = 'https://' . li_storefront_store() . '/products/' . rawurlencode( $p['handle'] );
         $prices = array_map( 'floatval', array_column( (array) $p['variants'], 'price' ) );
-        $price  = $prices ? min( $prices ) : 0;
+        $low    = $prices ? min( $prices ) : 0;
+        $high   = $prices ? max( $prices ) : 0;
         $img    = $p['images'][0]['src'] ?? '';
         $pos    = 0 === $i % $columns ? ' first' : ( $columns - 1 === $i % $columns ? ' last' : '' );
         $html  .= '<li class="product type-product' . $pos . ' instock has-post-thumbnail product-type-external">';
         $html  .= '<a href="' . esc_url( $url ) . '" class="woocommerce-LoopProduct-link woocommerce-loop-product__link" rel="nofollow">';
         $html  .= '<img decoding="async" loading="lazy" width="300" height="300" style="aspect-ratio:1/1;object-fit:contain;background:#fff" src="' . esc_url( li_storefront_image( $img ) ) . '" class="attachment-woocommerce_thumbnail size-woocommerce_thumbnail" alt="' . esc_attr( $p['title'] ) . '">';
         $html  .= '<h2 class="woocommerce-loop-product__title">' . esc_html( $p['title'] ) . '</h2> ';
-        $html  .= '<span class="price"><span class="woocommerce-Price-amount amount"><bdi><span class="woocommerce-Price-currencySymbol">' . esc_html( li_currency_symbol() ) . '</span>' . esc_html( number_format( $price, 2 ) ) . '</bdi></span></span> </a>';
+        $html  .= '<span class="price">' . li_storefront_price_html( $low ) . ( $high > $low ? ' &ndash; ' . li_storefront_price_html( $high ) : '' ) . '</span> </a>';
         $html  .= '<a href="' . esc_url( $url ) . '" class="button product_type_external" rel="nofollow" aria-label="DETAILS">DETAILS</a></li>';
     }
     return $html . '</ul></div>';
@@ -98,12 +114,16 @@ function li_storefront_featured( $attr ) {
     if ( ! $products ) {
         return false;
     }
+    $position = array_flip( (array) ( $data['featured'] ?? array() ) );
+    usort( $products, function( $a, $b ) use ( $position ) {
+        return ( $position[ $a['handle'] ] ?? 1000 ) - ( $position[ $b['handle'] ] ?? 1000 );
+    } );
     return li_storefront_products_html( array_slice( $products, 0, $limit ), $columns );
 }
 
 /** Merch design collections, in this order first; new design collections added in Shopify follow. */
 function li_storefront_design_order() {
-    return apply_filters( 'li_storefront_design_order', array( 'people-suck', 'some-hearts-have-fur', 'peace-love-and-rescue', 'black-dog-lives-matter', 'dog-free-is-not-freedom', 'people-are-why-dogs-need-rescuing', 'black-cat-lives-matter', 'equal-rights-equal-lives', 'every-cat-deserves-nine-lives' ) );
+    return apply_filters( 'li_storefront_design_order', array( 'people-suck', 'some-hearts-have-fur', 'peace-love-and-rescue', 'black-dog-lives-matter', 'dog-free-is-not-freedom', 'people-are-why-dogs-need-rescuing', 'black-cat-lives-matter', 'equal-rights-equal-lives', 'every-cat-deserves-nine-lives', 'seasonal-holiday' ) );
 }
 
 function li_storefront_designs( $attr ) {
@@ -111,10 +131,10 @@ function li_storefront_designs( $attr ) {
     if ( empty( $data['collections'] ) ) {
         return false;
     }
-    $skip    = apply_filters( 'li_storefront_not_designs', array( 'coffee', 'impactlist', 'merch', 'frontpage', 'all' ) );
+    $skip    = apply_filters( 'li_storefront_not_designs', array( 'coffee', 'impactlist', 'merch', 'frontpage', 'all', li_storefront_featured_collection() ) );
     $order   = array_flip( li_storefront_design_order() );
-    $designs = array_filter( $data['collections'], function( $c ) use ( $skip ) {
-        return ! empty( $c['image']['src'] ) && ! in_array( $c['handle'], $skip, true );
+    $designs = array_filter( $data['collections'], function( $c ) use ( $skip, $order ) {
+        return ( ! empty( $c['image']['src'] ) || isset( $order[ $c['handle'] ] ) ) && ! in_array( $c['handle'], $skip, true );
     } );
     if ( ! $designs ) {
         return false;
@@ -131,7 +151,7 @@ function li_storefront_designs( $attr ) {
         $pos   = 0 === $i % $columns ? ' first' : ( $columns - 1 === $i % $columns ? ' last' : '' );
         $count = isset( $c['products_count'] ) ? ' <mark class="count">(' . intval( $c['products_count'] ) . ')</mark>' : '';
         $html .= '<li class="product-category product' . $pos . '"><a aria-label="Visit product category ' . esc_attr( $c['title'] ) . '" href="' . esc_url( $url ) . '">';
-        $html .= '<img loading="lazy" decoding="async" src="' . esc_url( li_storefront_image( $c['image']['src'] ) ) . '" alt="' . esc_attr( $c['title'] ) . '" width="300" height="300"> ';
+        $html .= '<img loading="lazy" decoding="async" src="' . esc_url( li_storefront_image( $c['image']['src'] ?? '' ) ) . '" alt="' . esc_attr( $c['title'] ) . '" width="300" height="300"> ';
         $html .= '<h2 class="woocommerce-loop-category__title"> ' . esc_html( $c['title'] ) . $count . ' </h2></a></li>';
     }
     return $html . '</ul></div>';
