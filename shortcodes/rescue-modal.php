@@ -212,6 +212,19 @@ function li_rescue_modal_output() {
         cursor: pointer; background: none; border: none; line-height: 1; padding: 4px;
     }
     .li-modal-close:hover { color: #1a1a1a; }
+    /* Keep the theme's button hover/focus styles from moving or restyling the close button. */
+    #liRescueModal .li-modal-close,
+    #liRescueModal .li-modal-close:hover,
+    #liRescueModal .li-modal-close:focus,
+    #liRescueModal .li-modal-close:active {
+        position: absolute !important; top: 14px !important; right: 18px !important; left: auto !important; bottom: auto !important;
+        margin: 0 !important; width: auto !important; height: auto !important; min-width: 0 !important; float: none !important;
+        font-size: 24px !important; line-height: 1 !important; padding: 4px 8px !important; text-transform: none !important;
+        background: none !important; border: none !important; box-shadow: none !important; transform: none !important;
+        color: #aaa !important; z-index: 2 !important; cursor: pointer !important;
+    }
+    #liRescueModal .li-modal-close:hover,
+    #liRescueModal .li-modal-close:focus-visible { color: #1a1a1a !important; }
     .li-modal-eyebrow {
         font-size: 11px; font-weight: 900; letter-spacing: 3px;
         text-transform: uppercase; color: #CEA83D; margin: 0 0 10px;
@@ -320,7 +333,7 @@ function li_rescue_modal_output() {
             <button class="li-modal-close" onclick="liModalSkip()" aria-label="Close">×</button>
             <p class="li-modal-eyebrow">🐾 Before You Shop</p>
             <h2 class="li-modal-title">Choose a Rescue to Support</h2>
-            <p class="li-modal-sub">Every purchase earns revenue and ownership points for your chosen rescue. 55% of net profits go directly to them.</p>
+            <p class="li-modal-sub">Every purchase earns revenue and ownership points for your chosen rescue. At least 55% of net proceeds from eligible purchases go directly to the rescue you choose.</p>
 
             <div class="li-modal-rescues" id="liModalRescues">
                 <div class="li-modal-loading">Loading rescue partners...</div>
