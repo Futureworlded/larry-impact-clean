@@ -56,40 +56,38 @@ function li_order_events_table() {
 }
 
 function li_order_event_get( $event_id ) {
-    global $wpdb;
-    return $wpdb->get_row( $wpdb->prepare( 'SELECT * FROM ' . li_order_events_table() . ' WHERE id = %d', $event_id ) );
+    $row = li_store_first( 'order_events', 'id=eq.' . intval( $event_id ) );
+    return $row ? (object) $row : null;
 }
 
 function li_order_event_get_by_external( $source, $external_id ) {
-    global $wpdb;
     if ( '' === (string) $external_id ) {
         return null;
     }
-    return $wpdb->get_row( $wpdb->prepare( 'SELECT * FROM ' . li_order_events_table() . ' WHERE source = %s AND external_id = %s ORDER BY id DESC LIMIT 1', $source, $external_id ) );
+    $row = li_store_first( 'order_events', 'source=eq.' . urlencode( $source ) . '&external_id=eq.' . urlencode( (string) $external_id ) . '&order=id.desc' );
+    return $row ? (object) $row : null;
 }
 
 function li_order_event_save( $data ) {
-    global $wpdb;
     $source      = sanitize_key( $data['source'] ?? 'shopify' );
     $external_id = sanitize_text_field( (string) ( $data['external_id'] ?? '' ) );
-    $now         = current_time( 'mysql' );
+    $now         = li_store_now();
     $row         = array(
-        'source'     => $source,
-        'topic'      => sanitize_text_field( $data['topic'] ?? '' ),
-        'external_id'=> $external_id,
-        'order_ref'  => sanitize_text_field( $data['order_ref'] ?? '' ),
-        'signature'  => sanitize_key( $data['signature'] ?? '' ),
-        'payload'    => wp_json_encode( $data['payload'] ?? array() ),
-        'updated_at' => $now,
+        'source'      => $source,
+        'topic'       => sanitize_text_field( $data['topic'] ?? '' ),
+        'external_id' => $external_id,
+        'order_ref'   => sanitize_text_field( $data['order_ref'] ?? '' ),
+        'signature'   => sanitize_key( $data['signature'] ?? '' ),
+        'payload'     => wp_json_encode( $data['payload'] ?? array() ),
+        'updated_at'  => $now,
     );
     $existing = li_order_event_get_by_external( $source, $external_id );
     if ( $existing ) {
-        $wpdb->update( li_order_events_table(), $row, array( 'id' => $existing->id ) );
+        li_store_update( 'order_events', 'id=eq.' . intval( $existing->id ), $row );
         return intval( $existing->id );
     }
     $row['created_at'] = $now;
-    $wpdb->insert( li_order_events_table(), $row );
-    return intval( $wpdb->insert_id );
+    return li_store_insert( 'order_events', $row );
 }
 
 function li_order_outcome_result( $outcome ) {
@@ -116,20 +114,16 @@ function li_order_event_finish( $event_id, $outcome ) {
     $dismissed  = $is_problem && intval( $event->resolved_by ) > 0 && $alert_key === ( $previous['alert_key'] ?? '' );
 
     $outcome['alert_key'] = $alert_key;
-    $now = current_time( 'mysql' );
-    $wpdb->update(
-        li_order_events_table(),
-        array(
-            'result'      => $result,
-            'details'     => wp_json_encode( $outcome ),
-            'attempts'    => intval( $event->attempts ) + 1,
-            'updated_at'  => $now,
-            'resolved'    => ( ! $is_problem || $dismissed ) ? 1 : 0,
-            'resolved_at' => ( ! $is_problem || $dismissed ) ? $now : null,
-            'resolved_by' => $dismissed ? intval( $event->resolved_by ) : 0,
-        ),
-        array( 'id' => $event_id )
-    );
+    $now = li_store_now();
+    li_store_update( 'order_events', 'id=eq.' . intval( $event_id ), array(
+        'result'      => $result,
+        'details'     => wp_json_encode( $outcome ),
+        'attempts'    => intval( $event->attempts ) + 1,
+        'updated_at'  => $now,
+        'resolved'    => ( ! $is_problem || $dismissed ),
+        'resolved_at' => ( ! $is_problem || $dismissed ) ? $now : null,
+        'resolved_by' => $dismissed ? intval( $event->resolved_by ) : 0,
+    ) );
 
     if ( $is_problem && ! $dismissed && $alert_key !== ( $previous['alert_key'] ?? '' ) ) {
         li_order_health_alert( $outcome );
@@ -151,8 +145,14 @@ function li_order_problem_lines( $outcome ) {
         }
     }
     foreach ( (array) ( $outcome['skipped'] ?? array() ) as $line ) {
-        if ( 'no_sku' === ( $line['reason'] ?? '' ) ) {
+        if ( 'refund_no_order' === ( $line['reason'] ?? '' ) ) {
+            $lines[] = 'A Shopify refund (' . ( $line['title'] ?? '' ) . ') could not be matched to a Larry order. Check whether the rescue share needs to be taken back by hand.';
+        } elseif ( 'refund_no_line' === ( $line['reason'] ?? '' ) ) {
+            $lines[] = 'Refunded item was never credited in Larry, or is part of a bundle: ' . ( $line['title'] ?? '' ) . ' (SKU ' . ( $line['sku'] ?? '' ) . '). Check whether the rescue share needs to be taken back by hand.';
+        } elseif ( 'no_sku' === ( $line['reason'] ?? '' ) ) {
             $lines[] = 'Product has no SKU in Shopify: ' . ( $line['title'] ?? '' );
+        } elseif ( 'no_payout' === ( $line['reason'] ?? '' ) ) {
+            $lines[] = 'No rescue payout set yet for ' . ( $line['title'] ?? '' ) . ' (SKU ' . ( $line['sku'] ?? '' ) . '). Set it in Split Config, then click Retry.';
         } else {
             $lines[] = 'Product is not in the Larry product list: ' . ( $line['title'] ?? '' ) . ' (SKU ' . ( $line['sku'] ?? '' ) . ')';
         }
@@ -179,12 +179,7 @@ function li_order_health_alert( $outcome ) {
 }
 
 function li_order_health_unresolved_count() {
-    global $wpdb;
-    $table = li_order_events_table();
-    if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) !== $table ) {
-        return 0;
-    }
-    return intval( $wpdb->get_var( "SELECT COUNT(*) FROM {$table} WHERE resolved = 0 AND result IN ('needs_attention','failed')" ) );
+    return count( li_store_select( 'order_events', 'select=id&resolved=eq.false&result=in.(needs_attention,failed)&limit=1000' ) );
 }
 
 add_action( 'admin_notices', 'li_order_health_admin_notice' );
@@ -285,6 +280,7 @@ function li_shopify_order_lines( $payload ) {
         $lines[] = array(
             'sku'        => sanitize_text_field( (string) ( $line['sku'] ?? '' ) ),
             'title'      => sanitize_text_field( $title ),
+            'unit_cents' => intval( round( $price * 100 ) ),
             'qty'        => $qty,
             'sale_cents' => intval( round( max( 0, ( $price * $qty ) - $discount ) * 100 ) ),
         );
@@ -367,6 +363,23 @@ function li_process_shopify_order( $payload, $context = array() ) {
             continue;
         }
         $product = '' !== $line['sku'] ? li_get_product_by_sku( $line['sku'] ) : null;
+        if ( ! $product && '' !== $line['sku'] && ! $is_bundle && ! li_is_woo_sku( $line['sku'] ) ) {
+            $product = li_upsert_shopify_product( $line['sku'], $line['title'], $line['unit_cents'] ?? 0 );
+            if ( $product ) {
+                $known = get_option( 'li_shopify_skus', array() );
+                $known = is_array( $known ) ? $known : array();
+                if ( ! in_array( $line['sku'], $known, true ) ) {
+                    $known[] = $line['sku'];
+                    update_option( 'li_shopify_skus', $known, false );
+                }
+            }
+        }
+        if ( $product && li_is_shopify_only_sku( $line['sku'] ) && ! li_product_has_payout( $product ) ) {
+            $line['reason']       = 'no_payout';
+            $outcome['skipped'][] = $line;
+            li_log( 'Shopify order ' . $order_ref . ' line held: no rescue payout set for SKU ' . $line['sku'] );
+            continue;
+        }
         if ( ! $product ) {
             $line['reason']        = '' === $line['sku'] ? 'no_sku' : 'unknown_sku';
             $outcome['skipped'][] = $line;
@@ -524,12 +537,15 @@ function li_shopify_reconcile( $days = 0 ) {
                     discountAllocations { allocatedAmountSet { shopMoney { amount } } }
                     customAttributes { key value }
                 } }
+                refunds { legacyResourceId createdAt refundLineItems(first: 100) { nodes {
+                    quantity subtotalSet { shopMoney { amount } } lineItem { sku title }
+                } } }
             }
         }
     }';
     $last  = get_option( 'li_shopify_reconcile_last', array() );
     $since = $days > 0 ? time() - $days * DAY_IN_SECONDS : ( ! empty( $last['ok_at'] ) ? intval( $last['ok_at'] ) - 2 * DAY_IN_SECONDS : time() - 60 * DAY_IN_SECONDS );
-    $q     = '(financial_status:paid OR financial_status:partially_refunded) created_at:>=' . gmdate( 'Y-m-d\TH:i:s\Z', $since );
+    $q     = '(financial_status:paid OR financial_status:partially_refunded OR financial_status:refunded) updated_at:>=' . gmdate( 'Y-m-d\TH:i:s\Z', $since );
 
     $summary = array( 'run_at' => time(), 'checked' => 0, 'recorded' => 0, 'problems' => 0, 'error' => '' );
     $cursor  = null;
@@ -542,8 +558,19 @@ function li_shopify_reconcile( $days = 0 ) {
         foreach ( (array) ( $data['orders']['nodes'] ?? array() ) as $node ) {
             $summary['checked']++;
             $payload  = li_shopify_graphql_order_to_payload( $node );
+            foreach ( (array) ( $node['refunds'] ?? array() ) as $refund_node ) {
+                $refund = li_shopify_graphql_refund_to_payload( $payload['id'], $payload['name'], $refund_node );
+                $seen   = li_order_event_get_by_external( 'shopify_refund', $refund['id'] );
+                if ( $refund['id'] && ! ( $seen && intval( $seen->resolved ) === 1 ) ) {
+                    li_ingest_shopify_refund( $refund, array( 'topic' => 'scheduled check', 'signature' => 'api' ) );
+                }
+            }
             $existing = li_order_event_get_by_external( 'shopify', $payload['id'] );
             if ( $existing && intval( $existing->resolved ) === 1 ) {
+                continue;
+            }
+            if ( 'refunded' === $payload['financial_status'] && ! $existing ) {
+                // Fully refunded before Larry saw it: nothing to credit.
                 continue;
             }
             $result = li_ingest_shopify_order( $payload, array(
@@ -598,13 +625,17 @@ function li_shopify_catalog_gaps() {
             $components[ (string) $sku ] = true;
         }
     }
+    $known = li_products_by_sku();
+    if ( is_wp_error( $known ) ) {
+        return $known;
+    }
     $gaps = array();
     foreach ( $variants as $variant ) {
         $sku = $variant['sku'];
         if ( isset( $components[ $sku ] ) ) {
             continue;
         }
-        $product = '' !== $sku ? li_get_product_by_sku( $sku ) : null;
+        $product = '' !== $sku ? ( $known[ $sku ] ?? null ) : null;
         if ( ! $product ) {
             $issue = '' === $sku ? 'No SKU in Shopify' : 'Not in Larry';
         } elseif ( li_get_product_rescue_cents( $product ) <= 0 ) {
@@ -680,6 +711,7 @@ function li_schedule_shopify_catalog_check() {
 
 add_action( 'li_shopify_catalog_cron', 'li_shopify_catalog_cron' );
 function li_shopify_catalog_cron() {
+    li_shopify_sync_products();
     $gaps = li_shopify_catalog_gaps();
     if ( is_wp_error( $gaps ) ) {
         li_log( 'Shopify product check failed: ' . $gaps->get_error_message() );
@@ -720,11 +752,15 @@ function li_order_health_handle_post() {
         if ( ! is_array( $payload ) ) {
             return '<div class="li-msg-err">That order could not be loaded.</div>';
         }
-        $result = li_ingest_shopify_order( $payload, array(
-            'topic'           => $event->topic,
-            'signature'       => $event->signature,
-            'rescue_override' => sanitize_text_field( $_POST['rescue_override'] ?? '' ),
-        ) );
+        if ( 'shopify_refund' === $event->source ) {
+            $result = li_ingest_shopify_refund( $payload, array( 'topic' => $event->topic, 'signature' => $event->signature ) );
+        } else {
+            $result = li_ingest_shopify_order( $payload, array(
+                'topic'           => $event->topic,
+                'signature'       => $event->signature,
+                'rescue_override' => sanitize_text_field( $_POST['rescue_override'] ?? '' ),
+            ) );
+        }
         li_audit_log( 'order_health_retry', array( 'event_id' => $event_id, 'result' => $result ), 'order', $event->order_ref );
         return 'recorded' === $result
             ? '<div class="li-msg-ok">Order ' . esc_html( $event->order_ref ) . ' is now recorded.</div>'
@@ -732,7 +768,7 @@ function li_order_health_handle_post() {
     }
 
     if ( 'dismiss' === $action && $event_id ) {
-        $wpdb->update( li_order_events_table(), array( 'resolved' => 1, 'resolved_at' => current_time( 'mysql' ), 'resolved_by' => get_current_user_id() ), array( 'id' => $event_id ) );
+        li_store_update( 'order_events', 'id=eq.' . intval( $event_id ), array( 'resolved' => true, 'resolved_at' => li_store_now(), 'resolved_by' => get_current_user_id() ) );
         li_audit_log( 'order_health_dismissed', array( 'event_id' => $event_id ), 'order', (string) $event_id );
         return '<div class="li-msg-ok">Dismissed.</div>';
     }
@@ -743,6 +779,15 @@ function li_order_health_handle_post() {
             return '<div class="li-msg-err">' . esc_html( $summary['error'] ) . '</div>';
         }
         return '<div class="li-msg-ok">Checked ' . esc_html( $summary['checked'] ) . ' paid Shopify orders. Newly recorded: ' . esc_html( $summary['recorded'] ) . '. Need attention: ' . esc_html( $summary['problems'] ) . '.</div>';
+    }
+
+    if ( 'sync_products' === $action ) {
+        $sync = li_shopify_sync_products();
+        if ( is_wp_error( $sync ) ) {
+            return '<div class="li-msg-err">' . esc_html( $sync->get_error_message() ) . '</div>';
+        }
+        li_shopify_catalog_gaps();
+        return '<div class="li-msg-ok">Read ' . esc_html( $sync['variants'] ) . ' Shopify products. Newly added to Larry: ' . esc_html( $sync['added'] ) . '.</div>';
     }
 
     if ( 'catalog' === $action ) {
@@ -818,17 +863,19 @@ function li_page_order_health() {
     ob_start();
     echo $msg;
 
-    $open = $wpdb->get_results( "SELECT * FROM {$table} WHERE resolved = 0 AND result IN ('needs_attention','failed') ORDER BY created_at DESC LIMIT 100" );
+    echo li_money_check_card();
+
+    $open = li_store_objects( li_store_select( 'order_events', 'resolved=eq.false&result=in.(needs_attention,failed)&order=created_at.desc&limit=100' ) );
     echo '<div class="li-card"><div class="li-card-title">Orders that need attention (' . esc_html( count( $open ) ) . ')</div>';
     if ( ! $open ) {
         echo '<p style="margin:0;color:#3a7a4a">Every order received has been recorded.</p>';
     } else {
-        echo '<p class="li-hint" style="margin-top:0">If a product is missing, add it as a hidden WooCommerce product with the same SKU and a rescue payout, then click Record order.</p>';
+        echo '<p class="li-hint" style="margin-top:0">If a rescue payout is missing, set it in Split Config, then click Record order. New Shopify products are added to Larry automatically.</p>';
         echo '<div class="li-table-wrap"><table class="li-table"><thead><tr><th>Received</th><th>Order</th><th>Problem</th><th>Action</th></tr></thead><tbody>';
         foreach ( $open as $event ) {
             $details = json_decode( (string) $event->details, true );
             $details = is_array( $details ) ? $details : array();
-            echo '<tr><td>' . esc_html( mysql2date( 'M j, Y g:i a', $event->created_at ) ) . '</td>';
+            echo '<tr><td>' . esc_html( li_store_local_time( $event->created_at, 'M j, Y g:i a' ) ) . '</td>';
             echo '<td><strong>' . esc_html( $event->order_ref ) . '</strong></td>';
             echo '<td>' . implode( '<br>', array_map( 'esc_html', li_order_problem_lines( $details ) ) ) . '</td>';
             echo '<td style="white-space:nowrap">' . li_order_health_form( 'retry', li_order_health_rescue_select(), 'Record order', $event->id );
@@ -854,7 +901,12 @@ function li_page_order_health() {
     echo '</div>';
 
     echo '<div class="li-card"><div class="li-card-title">Shopify products</div>';
-    echo '<p class="li-hint" style="margin-top:0">Checked every day. An email goes out when a product for sale in Shopify is missing from Larry or has no rescue payout.</p>';
+    echo '<p class="li-hint" style="margin-top:0">New Shopify products are added to Larry every hour. Set each one&rsquo;s rescue payout in Split Config. Checked every day: an email goes out when a product for sale in Shopify has no rescue payout.</p>';
+    $sync_last = get_option( 'li_shopify_product_sync_last', array() );
+    if ( ! empty( $sync_last['run_at'] ) ) {
+        echo '<p style="margin-top:0">Last product sync: ' . esc_html( wp_date( 'M j, Y g:i a', intval( $sync_last['run_at'] ) ) ) . ' &middot; ' . esc_html( $sync_last['variants'] ) . ' Shopify products read</p>';
+    }
+    echo li_order_health_form( 'sync_products', '', 'Sync products now', 0, 'li-btn li-btn-sm' ) . ' ';
     echo li_order_health_form( 'catalog', '', 'Check now', 0, 'li-btn li-btn-sm' );
     $catalog = get_transient( 'li_shopify_catalog_gaps' );
     if ( is_array( $catalog ) ) {
@@ -881,7 +933,7 @@ function li_page_order_health() {
     echo li_order_health_form( 'manual', $fields, 'Record order', 0, 'li-btn' );
     echo '</div>';
 
-    $recent = $wpdb->get_results( "SELECT * FROM {$table} ORDER BY updated_at DESC LIMIT 50" );
+    $recent = li_store_objects( li_store_select( 'order_events', 'order=updated_at.desc&limit=50' ) );
     echo '<div class="li-card"><div class="li-card-title">Recent orders received</div>';
     if ( ! $recent ) {
         echo '<p style="margin:0">No orders received since Order Health was turned on.</p>';
@@ -892,7 +944,7 @@ function li_page_order_health() {
             $details = json_decode( (string) $event->details, true );
             $details = is_array( $details ) ? $details : array();
             $ok      = in_array( $event->result, array( 'recorded', 'ignored' ), true ) || intval( $event->resolved ) === 1;
-            echo '<tr><td>' . esc_html( mysql2date( 'M j g:i a', $event->updated_at ) ) . '</td>';
+            echo '<tr><td>' . esc_html( li_store_local_time( $event->updated_at, 'M j g:i a' ) ) . '</td>';
             echo '<td>' . esc_html( $event->order_ref ) . '</td>';
             echo '<td>' . esc_html( trim( $event->topic . ' ' . ( $event->signature ? '(' . $event->signature . ')' : '' ) ) ) . '</td>';
             echo '<td>' . esc_html( $details['rescue']['name'] ?? '' ) . '</td>';

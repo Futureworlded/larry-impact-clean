@@ -44,18 +44,15 @@ function li_page_split_config() {
         }
     }
 
-    $rows = array();
+    $rows            = array();
+    $shopify_skus    = li_shopify_skus();
 
     foreach ( $wc_by_sku as $sku => $wc ) {
         $name        = li_wc_product_display_name( $wc );
         $price_cents = max( 0, intval( round( floatval( $wc->get_price() ) * 100 ) ) );
         $wc_id       = $wc->get_id();
 
-        $rescue_cents = 0;
-        $meta = get_post_meta( $wc_id, '_li_rescue_cents', true );
-        if ( '' !== $meta ) {
-            $rescue_cents = max( 0, intval( $meta ) );
-        }
+        $rescue_cents = max( 0, intval( $db_by_sku[ $sku ]['rescue_cents'] ?? 0 ) );
 
         if ( $rescue_cents <= 0 && $price_cents > 0 ) {
             $db_product = $db_by_sku[ $sku ] ?? null;
@@ -93,7 +90,12 @@ function li_page_split_config() {
         $price_cents  = max( 0, intval( $p['price_cents'] ?? 0 ) );
         $rescue_cents = 0;
         $sp = isset( $split_configs[ $p['id'] ] ) ? $split_configs[ $p['id'] ] : null;
-        if ( $sp && floatval( $sp['rescue_percent'] ?? 0 ) > 0 ) {
+        $in_shopify = in_array( $sku, $shopify_skus, true );
+        if ( null !== ( $p['rescue_cents'] ?? null ) ) {
+            $rescue_cents = max( 0, intval( $p['rescue_cents'] ) );
+        } elseif ( $in_shopify ) {
+            $rescue_cents = 0;
+        } elseif ( $sp && floatval( $sp['rescue_percent'] ?? 0 ) > 0 ) {
             $rescue_cents = intval( round( $price_cents * floatval( $sp['rescue_percent'] ) / 100 ) );
         } else {
             $rescue_cents = li_get_rescue_cents_default( $p, $default_split );
@@ -107,6 +109,7 @@ function li_page_split_config() {
             'format'       => $p['format'] ?? 'Merch',
             'size_oz'      => $p['size_oz'] ?? '',
             'in_wc'        => false,
+            'in_shopify'   => $in_shopify,
         );
     }
 
@@ -118,7 +121,7 @@ function li_page_split_config() {
     $nonce    = esc_js( wp_create_nonce( 'li_save_split_configs' ) );
 
     ob_start();
-    echo '<p style="font-size:13px;color:#6b6560;margin-bottom:20px;">Set the fixed dollar amount that goes to the rescue for each product. Larry Impact receives the remainder of the sale. The list is built from the current WooCommerce catalog, so it always reflects the products that actually exist.</p>';
+    echo '<p style="font-size:13px;color:#6b6560;margin-bottom:20px;">Set the fixed dollar amount that goes to the rescue for each product. Larry Impact receives the remainder of the sale. The list is built from the current WooCommerce catalog plus the products sold in Shopify, so it always reflects the products that actually exist.</p>';
     echo '<div style="margin-bottom:16px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;">';
     echo '<button class="li-btn" style="background:#b91c1c;" onclick="liScCleanup()">Clean up obsolete products</button>';
     echo '<span style="font-size:12px;color:#a89880;">This hides every product whose SKU is not a published WooCommerce product.</span>';
@@ -131,15 +134,20 @@ function li_page_split_config() {
         $larry_cents = max( 0, $r['price'] - $r['rescue_cents'] );
         $format      = esc_html( $r['format'] );
         $size        = ! empty( $r['size_oz'] ) ? esc_html( $r['size_oz'] ) . 'oz' : '';
-        $missing     = ! $r['in_wc'] ? ' <span style="font-size:11px;color:#b91c1c;font-weight:600;">(not in WooCommerce)</span>' : '';
+        $editable    = $r['in_wc'] || ! empty( $r['in_shopify'] );
+        if ( ! empty( $r['in_shopify'] ) ) {
+            $missing = ' <span style="font-size:11px;color:#3a7a4a;font-weight:600;">(Shopify)</span>' . ( $r['rescue_cents'] > 0 ? '' : ' <span style="font-size:11px;color:#b91c1c;font-weight:600;">needs payout</span>' );
+        } else {
+            $missing = ! $r['in_wc'] ? ' <span style="font-size:11px;color:#b91c1c;font-weight:600;">(not in WooCommerce)</span>' : '';
+        }
         echo '<tr data-sku="' . esc_attr( $r['sku'] ) . '" data-product-id="' . esc_attr( $r['product_id'] ) . '">';
         echo '<td><strong>' . esc_html( $r['name'] ) . '</strong>' . $missing . '<br><span style="font-size:11px;color:#a89880;">' . esc_html( $format ) . ( $size ? ' ' . $size : '' ) . '</span></td>';
         echo '<td style="font-size:11px;color:#a89880;">' . esc_html( $r['sku'] ) . '</td>';
         echo '<td>$' . number_format( $r['price'] / 100, 2 ) . '</td>';
-        echo '<td><input type="number" class="li-sc-input" data-price="' . esc_attr( $r['price'] ) . '" data-initial="' . esc_attr( $dollars ) . '" min="0" step="0.01" value="' . esc_attr( $dollars ) . '" style="width:110px;border:1px solid #ddd8d0;border-radius:6px;padding:6px;font-size:13px;"' . ( $r['in_wc'] ? '' : ' disabled' ) . ' /> <span style="font-size:12px;color:#6b6560;">per unit</span></td>';
+        echo '<td><input type="number" class="li-sc-input" data-price="' . esc_attr( $r['price'] ) . '" data-initial="' . esc_attr( $dollars ) . '" min="0" step="0.01" value="' . esc_attr( $dollars ) . '" style="width:110px;border:1px solid #ddd8d0;border-radius:6px;padding:6px;font-size:13px;"' . ( $editable ? '' : ' disabled' ) . ' /> <span style="font-size:12px;color:#6b6560;">per unit</span></td>';
         echo '<td class="li-sc-larry">$' . number_format( $larry_cents / 100, 2 ) . '</td>';
         echo '<td>';
-        if ( $r['in_wc'] ) {
+        if ( $editable ) {
             echo '<span style="font-size:12px;color:#3a7a4a;">Active</span>';
         } else {
             echo '<button type="button" class="li-btn li-btn-sm" onclick="liScHide(this)" style="background:#b91c1c;">Hide</button>';
@@ -325,11 +333,13 @@ function li_ajax_save_split_configs() {
 
         $product_id  = $product['id'];
         $price_cents = max( 1, intval( $product['price_cents'] ?? 1 ) );
+        if ( ! li_set_product_rescue_cents( $sku, $rescue_cents ) ) {
+            wp_send_json_error( array( 'message' => 'Could not save the rescue payout for ' . $sku . '.', 'saved' => $saved ), 502 );
+        }
 
         if ( function_exists( 'wc_get_product_id_by_sku' ) ) {
             $wc_id = wc_get_product_id_by_sku( $sku );
             if ( $wc_id ) {
-                update_post_meta( $wc_id, '_li_rescue_cents', $rescue_cents );
                 $wc_product = wc_get_product( $wc_id );
                 if ( $wc_product ) {
                     $price_cents = max( 1, intval( round( floatval( $wc_product->get_price() ) * 100 ) ) );
