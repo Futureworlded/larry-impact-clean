@@ -625,13 +625,17 @@ function li_shopify_catalog_gaps() {
             $components[ (string) $sku ] = true;
         }
     }
+    $known = li_products_by_sku();
+    if ( is_wp_error( $known ) ) {
+        return $known;
+    }
     $gaps = array();
     foreach ( $variants as $variant ) {
         $sku = $variant['sku'];
         if ( isset( $components[ $sku ] ) ) {
             continue;
         }
-        $product = '' !== $sku ? li_get_product_by_sku( $sku ) : null;
+        $product = '' !== $sku ? ( $known[ $sku ] ?? null ) : null;
         if ( ! $product ) {
             $issue = '' === $sku ? 'No SKU in Shopify' : 'Not in Larry';
         } elseif ( li_get_product_rescue_cents( $product ) <= 0 ) {

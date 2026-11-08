@@ -117,6 +117,8 @@ alter table order_locks enable row level security;
 alter table split_versions enable row level security;
 alter table order_events enable row level security;
 revoke all on ledger, payout_batches, payout_lines, audit_log, fraud_flags, order_locks, split_versions, order_events from anon, authenticated;
+grant select, insert, update, delete on ledger, payout_batches, payout_lines, audit_log, fraud_flags, order_locks, split_versions, order_events to service_role;
+grant usage, select on all sequences in schema public to service_role;
 
 -- The ledger and audit log are append-only: rows can be added but never changed or deleted.
 create or replace function li_block_change() returns trigger language plpgsql as $$
