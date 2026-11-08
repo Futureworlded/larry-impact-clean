@@ -111,7 +111,7 @@ function li_get_report_data() {
         'fraud_flags'    => array(),
     );
 
-    $rows = $wpdb->get_results( "SELECT entry_type, rescue_id, product_id, amount_cents, net_cents, meta, created_at FROM {$wpdb->prefix}li_ledger" );
+    $rows = li_store_objects( li_store_select_all( 'ledger', 'select=id,entry_type,rescue_id,product_id,amount_cents,net_cents,meta,created_at' ) );
     if ( ! is_array( $rows ) ) {
         return $report;
     }
@@ -180,8 +180,8 @@ function li_get_report_data() {
     $report['outstanding']    = max( 0, $report['total_revenue'] - $report['total_payouts'] - $report['refunds'] - $report['chargebacks'] );
     $report['larry_revenue']  = max( 0, $report['larry_revenue'] );
 
-    $report['recent_payouts'] = $wpdb->get_results( "SELECT * FROM {$wpdb->prefix}li_payouts ORDER BY created_at DESC LIMIT 10" );
-    $report['fraud_flags']  = $wpdb->get_results( "SELECT * FROM {$wpdb->prefix}li_fraud_flags ORDER BY created_at DESC LIMIT 10" );
+    $report['recent_payouts'] = li_store_objects( li_store_select( 'payout_batches', 'order=created_at.desc&limit=10' ) );
+    $report['fraud_flags']    = li_store_objects( li_store_select( 'fraud_flags', 'order=created_at.desc&limit=10' ) );
 
     return $report;
 }
@@ -191,7 +191,7 @@ function li_export_ledger_csv() {
         wp_die( 'Unauthorized.' );
     }
     global $wpdb;
-    $rows = $wpdb->get_results( "SELECT * FROM {$wpdb->prefix}li_ledger ORDER BY created_at DESC" );
+    $rows = array_reverse( li_store_objects( li_store_select_all( 'ledger', 'select=*' ) ) );
     $filename = 'larry-impact-ledger-' . gmdate( 'Y-m-d' ) . '.csv';
     header( 'Content-Type: text/csv; charset=utf-8' );
     header( 'Content-Disposition: attachment; filename=' . $filename );

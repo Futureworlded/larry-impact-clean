@@ -98,24 +98,17 @@ function li_handle_stripe_payout_paid( $object ) {
         return;
     }
 
-    global $wpdb;
-    $payout = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$wpdb->prefix}li_payouts WHERE transfer_id = %s LIMIT 1", $transfer_id ), ARRAY_A );
+    $payout = li_store_first( 'payout_batches', 'transfer_id=eq.' . urlencode( $transfer_id ) );
 
     if ( $payout ) {
         if ( 'completed' === $payout['status'] ) {
             return;
         }
         {
-            $wpdb->update(
-                $wpdb->prefix . 'li_payouts',
-                array( 'status' => 'completed' ),
-                array( 'id' => $payout['id'] ),
-                array( '%s' ),
-                array( '%d' )
-            );
+            li_store_update( 'payout_batches', 'id=eq.' . intval( $payout['id'] ), array( 'status' => 'completed' ) );
             li_audit_log( 'payout_confirmed_by_stripe', array( 'payout_id' => $payout['id'], 'transfer_id' => $transfer_id, 'rescue_id' => $payout['rescue_id'], 'amount_cents' => $amount_cents ), 'payout', $payout['id'] );
         }
-        $order_refs = $wpdb->get_col( $wpdb->prepare( "SELECT order_ref FROM {$wpdb->prefix}li_payout_lines WHERE payout_id = %d", $payout['id'] ) );
+        $order_refs = li_payout_order_refs( $payout['id'] );
         $rescue_id  = $payout['rescue_id'];
     } else {
         $rescue = null;
@@ -172,12 +165,9 @@ function li_handle_stripe_payout_paid( $object ) {
             }
         }
     } else {
-        $orders = li_db_get( 'orders?rescue_id=eq.' . urlencode( $rescue_id ) . '&status=eq.pending&select=*' );
-        if ( is_array( $orders ) ) {
-            foreach ( $orders as $o ) {
-                li_db_patch( 'orders?id=eq.' . urlencode( $o['id'] ), array( 'status' => 'paid' ) );
-            }
-        }
+        // A transfer Larry did not make: record it, but do not guess which orders it paid.
+        li_flag_fraud( 'unmatched_transfer', array( 'rescue_id' => $rescue_id, 'details' => array( 'transfer_id' => $transfer_id, 'amount_cents' => $amount_cents ) ) );
+        li_notify_admin( 'Stripe transfer not made by Larry: ' . $rescue_name, "Stripe reported a \$$amount_dollars transfer ($transfer_id) to $rescue_name that Larry did not send. No orders were marked paid. Check it in Stripe; the daily balance check will list it until it is matched.\n\n" . admin_url( 'admin.php?page=li-payouts' ) );
     }
 
     li_audit_log( 'orders_marked_paid_by_stripe', array( 'transfer_id' => $transfer_id, 'rescue_id' => $rescue_id ), 'payout', $transfer_id );
@@ -221,12 +211,7 @@ function li_handle_stripe_charge_refunded( $object ) {
     }
 
     // Avoid double-recording a refund that was already handled by the WooCommerce refund hook.
-    global $wpdb;
-    $existing = $wpdb->get_var( $wpdb->prepare(
-        "SELECT COUNT(*) FROM {$wpdb->prefix}li_ledger WHERE entry_type = %s AND meta LIKE %s",
-        'refund',
-        $wpdb->esc_like( wp_json_encode( array( 'charge_id' => $charge_id ) ) ) . '%'
-    ) );
+    $existing = li_store_first( 'ledger', 'select=id&entry_type=eq.refund&meta=like.' . rawurlencode( '*"charge_id":"' . $charge_id . '"*' ) );
     if ( $existing ) {
         return;
     }
