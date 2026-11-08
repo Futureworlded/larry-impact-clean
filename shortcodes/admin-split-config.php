@@ -46,18 +46,13 @@ function li_page_split_config() {
 
     $rows            = array();
     $shopify_skus    = li_shopify_skus();
-    $shopify_payouts = li_shopify_payouts();
 
     foreach ( $wc_by_sku as $sku => $wc ) {
         $name        = li_wc_product_display_name( $wc );
         $price_cents = max( 0, intval( round( floatval( $wc->get_price() ) * 100 ) ) );
         $wc_id       = $wc->get_id();
 
-        $rescue_cents = 0;
-        $meta = get_post_meta( $wc_id, '_li_rescue_cents', true );
-        if ( '' !== $meta ) {
-            $rescue_cents = max( 0, intval( $meta ) );
-        }
+        $rescue_cents = max( 0, intval( $db_by_sku[ $sku ]['rescue_cents'] ?? 0 ) );
 
         if ( $rescue_cents <= 0 && $price_cents > 0 ) {
             $db_product = $db_by_sku[ $sku ] ?? null;
@@ -96,8 +91,10 @@ function li_page_split_config() {
         $rescue_cents = 0;
         $sp = isset( $split_configs[ $p['id'] ] ) ? $split_configs[ $p['id'] ] : null;
         $in_shopify = in_array( $sku, $shopify_skus, true );
-        if ( $in_shopify ) {
-            $rescue_cents = isset( $shopify_payouts[ $sku ] ) ? max( 0, intval( $shopify_payouts[ $sku ] ) ) : 0;
+        if ( null !== ( $p['rescue_cents'] ?? null ) ) {
+            $rescue_cents = max( 0, intval( $p['rescue_cents'] ) );
+        } elseif ( $in_shopify ) {
+            $rescue_cents = 0;
         } elseif ( $sp && floatval( $sp['rescue_percent'] ?? 0 ) > 0 ) {
             $rescue_cents = intval( round( $price_cents * floatval( $sp['rescue_percent'] ) / 100 ) );
         } else {
@@ -336,14 +333,13 @@ function li_ajax_save_split_configs() {
 
         $product_id  = $product['id'];
         $price_cents = max( 1, intval( $product['price_cents'] ?? 1 ) );
-        if ( ! li_is_woo_sku( $sku ) && in_array( $sku, li_shopify_skus(), true ) ) {
-            li_set_shopify_payout( $sku, $rescue_cents );
+        if ( ! li_set_product_rescue_cents( $sku, $rescue_cents ) ) {
+            wp_send_json_error( array( 'message' => 'Could not save the rescue payout for ' . $sku . '.', 'saved' => $saved ), 502 );
         }
 
         if ( function_exists( 'wc_get_product_id_by_sku' ) ) {
             $wc_id = wc_get_product_id_by_sku( $sku );
             if ( $wc_id ) {
-                update_post_meta( $wc_id, '_li_rescue_cents', $rescue_cents );
                 $wc_product = wc_get_product( $wc_id );
                 if ( $wc_product ) {
                     $price_cents = max( 1, intval( round( floatval( $wc_product->get_price() ) * 100 ) ) );

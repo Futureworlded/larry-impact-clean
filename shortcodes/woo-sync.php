@@ -262,33 +262,12 @@ function li_save_product_cost_field( $product ) {
     }
 }
 
-// Rescue payout field for split calculations
+// The rescue payout is set in Larry Impact > Split Config and stored with the product in Supabase.
 add_action( 'woocommerce_product_options_general_product_data', 'li_add_product_rescue_cents_field', 15 );
 function li_add_product_rescue_cents_field() {
     global $post;
-    $value = '';
-    if ( $post ) {
-        $cents = get_post_meta( $post->ID, '_li_rescue_cents', true );
-        if ( '' !== $cents ) {
-            $value = number_format( intval( $cents ) / 100, 2 );
-        }
-    }
-    woocommerce_wp_text_input( array(
-        'id'          => '_li_rescue_cents',
-        'label'       => 'Rescue payout ($)',
-        'description' => 'Fixed dollar amount that goes to the rescue for each unit sold. Leave blank to use the default split.',
-        'type'        => 'number',
-        'value'       => $value,
-        'custom_attributes' => array( 'step' => '0.01', 'min' => '0' ),
-        'desc_tip'    => true,
-    ) );
-}
-
-add_action( 'woocommerce_admin_process_product_object', 'li_save_product_rescue_cents_field', 10, 1 );
-function li_save_product_rescue_cents_field( $product ) {
-    if ( isset( $_POST['_li_rescue_cents'] ) ) {
-        $dollars = floatval( $_POST['_li_rescue_cents'] );
-        $cents   = max( 0, intval( round( $dollars * 100 ) ) );
-        $product->update_meta_data( '_li_rescue_cents', $cents );
-    }
+    $wc      = $post ? wc_get_product( $post->ID ) : null;
+    $product = ( $wc && $wc->get_sku() ) ? li_get_product_by_sku( $wc->get_sku() ) : null;
+    $value   = ( $product && null !== ( $product['rescue_cents'] ?? null ) ) ? li_format_money( $product['rescue_cents'] ) : 'Not set';
+    echo '<p class="form-field"><label>Rescue payout</label><strong>' . esc_html( $value ) . '</strong> &nbsp;<a href="' . esc_url( admin_url( 'admin.php?page=li-split-config' ) ) . '">Change in Split Config</a></p>';
 }
