@@ -78,7 +78,14 @@ function li_handle_media_upload() {
     if ( ! empty( $upload['error'] ) ) {
         wp_send_json_error( array( 'message' => $upload['error'] ) );
     }
-    wp_send_json_success( array( 'url' => $upload['url'] ) );
+    $url = $upload['url'];
+    if ( function_exists( 'li_shrink_uploaded_image' ) && preg_match( '/\.(png|jpe?g|webp)$/i', $upload['file'] ) ) {
+        $new = li_shrink_uploaded_image( $upload['file'] );
+        if ( $new !== $upload['file'] ) {
+            $url = dirname( $upload['url'] ) . '/' . basename( $new );
+        }
+    }
+    wp_send_json_success( array( 'url' => $url ) );
 }
 add_action( 'wp_ajax_li_media_upload', 'li_handle_media_upload' );
 
