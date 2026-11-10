@@ -114,5 +114,20 @@ $bad = $tee; $bad['body_html'] = '<p>This tee is an instant crowd favorite.</p>'
 check( 'stock garment text is caught', (bool) preg_grep( '/stock garment text/', li_shopify_listing_issues( $bad ) ) );
 check( 'products without colors are skipped', array() === li_shopify_listing_issues( array( 'options' => array( array( 'name' => 'Size', 'values' => array( '12oz' ) ) ), 'body_html' => 'Coffee', 'images' => array() ) ) );
 
+echo "Private W-9 files\n";
+li_test_load( 'shortcodes/w9-private.php', array( 'li_w9_legacy_path', 'li_w9_can_view', 'li_w9_is_private_link' ) );
+$base = 'https://larryimpact.com/wp-content/uploads';
+check( 'old public W-9 link maps to its file', '/srv/up/2026/10/w9_form.pdf' === li_w9_legacy_path( $base . '/2026/10/w9_form.pdf', $base, '/srv/up' ) );
+check( 'http link with a space in the name maps too', '/srv/up/2026/10/w9_a b.pdf' === li_w9_legacy_path( 'http://larryimpact.com/wp-content/uploads/2026/10/w9_a%20b.pdf', $base, '/srv/up' ) );
+check( 'link outside the uploads folder is not touched', '' === li_w9_legacy_path( 'https://other.test/w9.pdf', $base, '/srv/up' ) );
+check( 'path tricks are refused', '' === li_w9_legacy_path( $base . '/../wp-config.php', $base, '/srv/up' ) );
+check( 'already-private files are not moved again', '' === li_w9_legacy_path( $base . '/li-private/w9/x.pdf', $base, '/srv/up' ) );
+check( 'admin can open any W-9', li_w9_can_view( 'r1', true, '' ) );
+check( 'rescue can open its own W-9', li_w9_can_view( 'r1', false, 'r1' ) );
+check( "rescue cannot open another rescue's W-9", ! li_w9_can_view( 'r2', false, 'r1' ) );
+check( 'signed-in user with no rescue is refused', ! li_w9_can_view( 'r1', false, '' ) );
+check( 'missing rescue id is refused, even for admin', ! li_w9_can_view( '', true, '' ) );
+check( 'private link is recognised', li_w9_is_private_link( 'https://x.test/wp-admin/admin-ajax.php?action=li_w9_download&rescue_id=r1' ) && ! li_w9_is_private_link( $base . '/2026/10/w9.pdf' ) );
+
 echo $GLOBALS['li_test_failures'] ? "\n{$GLOBALS['li_test_failures']} failed\n" : "\nAll passed\n";
 exit( $GLOBALS['li_test_failures'] ? 1 : 0 );
