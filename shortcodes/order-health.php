@@ -702,6 +702,98 @@ function li_shopify_active_variants() {
     return $out;
 }
 
+/**
+ * Problems a shopper would see on an apparel product page: pictures of colors that are not for sale,
+ * a back view as the main picture, or the supplier's stock text instead of the product's own description.
+ */
+function li_shopify_listing_issues( $product ) {
+    $colors = array();
+    foreach ( (array) ( $product['options'] ?? array() ) as $option ) {
+        if ( in_array( strtolower( (string) ( $option['name'] ?? '' ) ), array( 'color', 'colour' ), true ) ) {
+            foreach ( (array) ( $option['values'] ?? array() ) as $value ) {
+                $colors[] = '-' . trim( preg_replace( '/[^a-z0-9]+/', '-', strtolower( (string) $value ) ), '-' ) . '-';
+            }
+        }
+    }
+    if ( ! $colors ) {
+        return array();
+    }
+    $issues = array();
+    $images = (array) ( $product['images'] ?? array() );
+    $files  = array();
+    foreach ( $images as $image ) {
+        $files[] = array( strtolower( basename( (string) wp_parse_url( (string) ( $image['src'] ?? '' ), PHP_URL_PATH ) ) ), ! empty( $image['variant_ids'] ) );
+    }
+    $unsold = 0;
+    foreach ( $files as $file ) {
+        if ( $file[1] || ! preg_match( '/-(front|back|left|right|side|flat)/', $file[0] ) ) {
+            continue;
+        }
+        $match = false;
+        foreach ( $colors as $color ) {
+            if ( false !== strpos( $file[0], $color ) ) {
+                $match = true;
+                break;
+            }
+        }
+        $unsold += $match ? 0 : 1;
+    }
+    if ( $unsold ) {
+        $issues[] = $unsold . ' pictures of colors not for sale';
+    }
+    if ( $files && preg_match( '/-(back|left|right|side)[-_.]/', $files[0][0] ) && ! preg_match( '/-front[-_.]/', $files[0][0] ) ) {
+        $issues[] = 'Main picture is not a front view';
+    }
+    if ( false === stripos( wp_strip_all_tags( (string) ( $product['body_html'] ?? '' ) ), 'rescue' ) ) {
+        $issues[] = 'Description is the stock garment text';
+    }
+    return $issues;
+}
+
+function li_shopify_listing_check() {
+    $store    = preg_replace( '#^https?://|/.*$#', '', (string) get_option( 'li_shopify_store', 'larrybev.myshopify.com' ) );
+    $problems = array();
+    for ( $page = 1; $page <= 20; $page++ ) {
+        $r = wp_remote_get( 'https://' . $store . '/products.json?limit=250&page=' . $page, array( 'timeout' => 20 ) );
+        if ( is_wp_error( $r ) || 200 !== wp_remote_retrieve_response_code( $r ) ) {
+            return new WP_Error( 'shopify_feed', 'Could not read the Shopify product list.' );
+        }
+        $products = json_decode( wp_remote_retrieve_body( $r ), true )['products'] ?? array();
+        foreach ( (array) $products as $product ) {
+            $issues = li_shopify_listing_issues( $product );
+            if ( $issues ) {
+                $problems[] = array( 'title' => (string) ( $product['title'] ?? '' ), 'handle' => (string) ( $product['handle'] ?? '' ), 'issues' => $issues );
+            }
+        }
+        if ( count( (array) $products ) < 250 ) {
+            break;
+        }
+    }
+    set_transient( 'li_shopify_listing_problems', array( 'checked_at' => time(), 'problems' => $problems ), 2 * DAY_IN_SECONDS );
+    return $problems;
+}
+
+function li_shopify_listing_alert( $problems ) {
+    $key = md5( wp_json_encode( $problems ) );
+    if ( ! $problems ) {
+        delete_option( 'li_shopify_listing_alerted' );
+        return;
+    }
+    if ( get_option( 'li_shopify_listing_alerted' ) === $key ) {
+        return;
+    }
+    $store = preg_replace( '#^https?://|/.*$#', '', (string) get_option( 'li_shopify_store', 'larrybev.myshopify.com' ) );
+    $lines = array();
+    foreach ( $problems as $problem ) {
+        $lines[] = '- ' . $problem['title'] . ': ' . implode( '; ', $problem['issues'] ) . "\n  https://" . $store . '/products/' . $problem['handle'];
+    }
+    li_notify_admin(
+        'Shopify product pages need a look: ' . count( $problems ),
+        "These products show shoppers the wrong pictures or description.\n\n" . implode( "\n", $lines ) . "\n\nReview: " . admin_url( 'admin.php?page=li-order-health' )
+    );
+    update_option( 'li_shopify_listing_alerted', $key, false );
+}
+
 add_action( 'init', 'li_schedule_shopify_catalog_check' );
 function li_schedule_shopify_catalog_check() {
     if ( ! wp_next_scheduled( 'li_shopify_catalog_cron' ) ) {
@@ -712,6 +804,12 @@ function li_schedule_shopify_catalog_check() {
 add_action( 'li_shopify_catalog_cron', 'li_shopify_catalog_cron' );
 function li_shopify_catalog_cron() {
     li_shopify_sync_products();
+    $listing = li_shopify_listing_check();
+    if ( is_wp_error( $listing ) ) {
+        li_log( 'Shopify product page check failed: ' . $listing->get_error_message() );
+    } else {
+        li_shopify_listing_alert( $listing );
+    }
     $gaps = li_shopify_catalog_gaps();
     if ( is_wp_error( $gaps ) ) {
         li_log( 'Shopify product check failed: ' . $gaps->get_error_message() );
@@ -794,6 +892,10 @@ function li_order_health_handle_post() {
         $gaps = li_shopify_catalog_gaps();
         if ( is_wp_error( $gaps ) ) {
             return '<div class="li-msg-err">' . esc_html( $gaps->get_error_message() ) . '</div>';
+        }
+        $listing = li_shopify_listing_check();
+        if ( is_wp_error( $listing ) ) {
+            return '<div class="li-msg-err">' . esc_html( $listing->get_error_message() ) . '</div>';
         }
         return '<div class="li-msg-ok">Product check finished.</div>';
     }
@@ -901,7 +1003,7 @@ function li_page_order_health() {
     echo '</div>';
 
     echo '<div class="li-card"><div class="li-card-title">Shopify products</div>';
-    echo '<p class="li-hint" style="margin-top:0">New Shopify products are added to Larry every hour. Set each one&rsquo;s rescue payout in Split Config. Checked every day: an email goes out when a product for sale in Shopify has no rescue payout.</p>';
+    echo '<p class="li-hint" style="margin-top:0">New Shopify products are added to Larry every hour. Set each one&rsquo;s rescue payout in Split Config. Checked every day: an email goes out when a product for sale in Shopify has no rescue payout, or when a product page shows pictures of colors not for sale, a back view first, or stock description text.</p>';
     $sync_last = get_option( 'li_shopify_product_sync_last', array() );
     if ( ! empty( $sync_last['run_at'] ) ) {
         echo '<p style="margin-top:0">Last product sync: ' . esc_html( wp_date( 'M j, Y g:i a', intval( $sync_last['run_at'] ) ) ) . ' &middot; ' . esc_html( $sync_last['variants'] ) . ' Shopify products read</p>';
@@ -916,6 +1018,19 @@ function li_page_order_health() {
             echo '<div class="li-table-wrap"><table class="li-table"><thead><tr><th>SKU</th><th>Product</th><th>Price</th><th>Problem</th></tr></thead><tbody>';
             foreach ( $gaps as $gap ) {
                 echo '<tr><td>' . esc_html( '' !== $gap['sku'] ? $gap['sku'] : '(no SKU)' ) . '</td><td>' . esc_html( $gap['name'] ) . '</td><td>' . esc_html( $gap['price'] ) . '</td><td>' . esc_html( $gap['issue'] ?? 'Not in Larry' ) . '</td></tr>';
+            }
+            echo '</tbody></table></div>';
+        }
+    }
+    $listing = get_transient( 'li_shopify_listing_problems' );
+    if ( is_array( $listing ) ) {
+        $problems = $listing['problems'];
+        echo '<p style="margin:16px 0 8px">' . ( $problems ? '<strong>' . esc_html( count( $problems ) ) . '</strong> Shopify product pages show the wrong pictures or description' : 'Every Shopify product page has the right pictures and description' ) . ' (checked ' . esc_html( wp_date( 'M j g:i a', intval( $listing['checked_at'] ) ) ) . ').</p>';
+        if ( $problems ) {
+            $store = preg_replace( '#^https?://|/.*$#', '', (string) get_option( 'li_shopify_store', 'larrybev.myshopify.com' ) );
+            echo '<div class="li-table-wrap"><table class="li-table"><thead><tr><th>Product</th><th>Problem</th></tr></thead><tbody>';
+            foreach ( $problems as $problem ) {
+                echo '<tr><td><a href="' . esc_url( 'https://' . $store . '/products/' . $problem['handle'] ) . '" target="_blank" rel="noopener">' . esc_html( $problem['title'] ) . '</a></td><td>' . esc_html( implode( '; ', $problem['issues'] ) ) . '</td></tr>';
             }
             echo '</tbody></table></div>';
         }
