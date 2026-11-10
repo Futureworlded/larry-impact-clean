@@ -124,12 +124,12 @@ function li_w9_migrate_legacy() {
 
 add_action( 'admin_init', 'li_w9_maybe_migrate' );
 function li_w9_maybe_migrate() {
-    if ( get_option( 'li_w9_private_done' ) || ! current_user_can( 'manage_options' ) ) return;
+    if ( get_option( 'li_w9_private_moved' ) || ! current_user_can( 'manage_options' ) ) return;
     if ( get_transient( 'li_w9_migrate_running' ) ) return;
     set_transient( 'li_w9_migrate_running', 1, 5 * MINUTE_IN_SECONDS );
     $out = li_w9_migrate_legacy();
     delete_transient( 'li_w9_migrate_running' );
     if ( is_wp_error( $out ) ) { li_log( 'W-9 move failed: ' . $out->get_error_message() ); return; }
     li_log( 'W-9 move: ' . wp_json_encode( $out ) );
-    if ( 0 === $out['failed'] ) update_option( 'li_w9_private_done', 1 );
+    if ( 0 === $out['failed'] ) update_option( 'li_w9_private_moved', 1 );
 }
