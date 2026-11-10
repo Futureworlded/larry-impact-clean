@@ -93,6 +93,27 @@ check( 'shares larger than the sale are caught', (bool) preg_grep( '/more than t
 $c = li_money_check_problems( $orders, array( array( 'id' => 5, 'rescue_id' => 'r1', 'amount_cents' => 600, 'status' => 'sending', 'transfer_id' => '', 'created_at' => '2026-11-01T00:00:00Z' ) ), $lines, strtotime( '2026-11-01T03:00:00Z' ) );
 check( 'a payout stuck sending to Stripe is caught', (bool) preg_grep( '/sending to Stripe/', $c['problems'] ) );
 
+echo "Shopify product page check\n";
+if ( ! function_exists( 'wp_parse_url' ) ) { function wp_parse_url( $u, $c = -1 ) { return parse_url( $u, $c ); } }
+if ( ! function_exists( 'wp_strip_all_tags' ) ) { function wp_strip_all_tags( $s ) { return trim( strip_tags( $s ) ); } }
+li_test_load( 'shortcodes/order-health.php', array( 'li_shopify_listing_issues' ) );
+$tee = array(
+    'options'   => array( array( 'name' => 'Color', 'values' => array( 'Black', 'Dark Grey Heather' ) ), array( 'name' => 'Size', 'values' => array( 'S', 'M' ) ) ),
+    'body_html' => '<p>At least 55% goes to the rescue you choose.</p>',
+    'images'    => array(
+        array( 'src' => 'https://cdn.test/files/unisex-long-sleeve-tee-black-front-6a5a.jpg?v=1', 'variant_ids' => array( 1 ) ),
+        array( 'src' => 'https://cdn.test/files/unisex-long-sleeve-tee-dark-grey-heather-front-6a5b.jpg', 'variant_ids' => array() ),
+    ),
+);
+check( 'a good apparel page has no problems', array() === li_shopify_listing_issues( $tee ) );
+$bad = $tee; $bad['images'][] = array( 'src' => 'https://cdn.test/files/unisex-long-sleeve-tee-citron-front-6a5c.jpg', 'variant_ids' => array() );
+check( 'pictures of a color not for sale are caught', (bool) preg_grep( '/1 pictures of colors not for sale/', li_shopify_listing_issues( $bad ) ) );
+$bad = $tee; array_unshift( $bad['images'], array( 'src' => 'https://cdn.test/files/unisex-long-sleeve-tee-black-back-6a5d.jpg', 'variant_ids' => array() ) );
+check( 'a back view as the main picture is caught', (bool) preg_grep( '/not a front view/', li_shopify_listing_issues( $bad ) ) );
+$bad = $tee; $bad['body_html'] = '<p>This tee is an instant crowd favorite.</p>';
+check( 'stock garment text is caught', (bool) preg_grep( '/stock garment text/', li_shopify_listing_issues( $bad ) ) );
+check( 'products without colors are skipped', array() === li_shopify_listing_issues( array( 'options' => array( array( 'name' => 'Size', 'values' => array( '12oz' ) ) ), 'body_html' => 'Coffee', 'images' => array() ) ) );
+
 echo "Private W-9 files\n";
 li_test_load( 'shortcodes/w9-private.php', array( 'li_w9_legacy_path', 'li_w9_can_view', 'li_w9_is_private_link' ) );
 $base = 'https://larryimpact.com/wp-content/uploads';
