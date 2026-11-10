@@ -102,7 +102,7 @@ function li_handle_rescue_field_update() {
     if ( ! $rid || ! $field ) {
         wp_send_json_error( array( 'message' => 'Missing rescue or field.' ) );
     }
-    $allowed = array( 'logo_url', 'hero_photo_url', 'w9_url' );
+    $allowed = array( 'logo_url', 'hero_photo_url' );
     if ( ! in_array( $field, $allowed, true ) ) {
         wp_send_json_error( array( 'message' => 'Invalid field.' ) );
     }
@@ -151,12 +151,11 @@ function li_handle_w9_upload() {
     if ( false === $bits ) {
         wp_send_json_error( array( 'message' => 'Could not read the uploaded file.' ) );
     }
-    $filename = 'w9_' . sanitize_file_name( $file['name'] );
-    $upload = wp_upload_bits( $filename, null, $bits );
-    if ( ! empty( $upload['error'] ) ) {
-        wp_send_json_error( array( 'message' => $upload['error'] ) );
+    $type = wp_check_filetype_and_ext( $file['tmp_name'], $file['name'], null );
+    $url  = li_w9_store( $rid, $bits, $type['ext'] ?? '' );
+    if ( is_wp_error( $url ) ) {
+        wp_send_json_error( array( 'message' => $url->get_error_message() ) );
     }
-    $url = $upload['url'];
     $r = li_db_patch( 'rescues?id=eq.' . urlencode( $rid ), array( 'w9_url' => esc_url_raw( $url ) ) );
     if ( is_wp_error( $r ) || wp_remote_retrieve_response_code( $r ) >= 400 ) {
         update_option( 'li_w9_url_' . $rid, esc_url_raw( $url ) );
