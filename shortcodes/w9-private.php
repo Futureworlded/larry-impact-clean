@@ -1,12 +1,13 @@
 <?php
 if ( ! defined( 'ABSPATH' ) ) exit;
 
-// W-9s hold tax IDs, so they live in a folder the web server refuses to serve.
-// They are only readable through li_w9_download, by an admin or the rescue that owns them.
+// W-9s hold tax IDs, so they are kept above the web root (SiteGround's nginx serves
+// static files under public_html without reading .htaccess). They are only readable
+// through li_w9_download, by an admin or the rescue that owns them.
 
 function li_w9_private_dir() {
-    $u = wp_upload_dir();
-    return trailingslashit( $u['basedir'] ) . 'li-private/w9';
+    $root = defined( 'LI_PRIVATE_DIR' ) ? LI_PRIVATE_DIR : dirname( untrailingslashit( ABSPATH ) ) . '/li-private';
+    return rtrim( $root, '/' ) . '/w9';
 }
 
 function li_w9_protect_dir( $dir ) {
