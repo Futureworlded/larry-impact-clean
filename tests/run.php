@@ -129,5 +129,13 @@ check( 'signed-in user with no rescue is refused', ! li_w9_can_view( 'r1', false
 check( 'missing rescue id is refused, even for admin', ! li_w9_can_view( '', true, '' ) );
 check( 'private link is recognised', li_w9_is_private_link( 'https://x.test/wp-admin/admin-ajax.php?action=li_w9_download&rescue_id=r1' ) && ! li_w9_is_private_link( $base . '/2026/10/w9.pdf' ) );
 
+echo "Merch page design tiles\n";
+li_test_load( 'shortcodes/shopify-storefront.php', array( 'li_storefront_swap_category_tiles' ) );
+$woo = '<ul class="products columns-4"><li class="product-category product first"><a href="x">Old A</a></li>
+<li class="product-category product"><a href="y">Old B</a></li>';
+$new = li_storefront_swap_category_tiles( $woo, '<li class="product-category product">Seasonal</li>' );
+check( 'old WooCommerce tiles are replaced by the Shopify tiles', false === strpos( $new, 'Old ' ) && false !== strpos( $new, 'Seasonal' ) );
+check( 'the product list wrapper is kept', 0 === strpos( $new, '<ul class="products columns-4">' ) );
+
 echo $GLOBALS['li_test_failures'] ? "\n{$GLOBALS['li_test_failures']} failed\n" : "\nAll passed\n";
 exit( $GLOBALS['li_test_failures'] ? 1 : 0 );

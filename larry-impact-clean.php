@@ -3,7 +3,7 @@
  * Plugin Name: Larry Impact
  * Plugin URI:  https://larryimpact.com
  * Description: Powers all Larry Impact functionality.
- * Version:     3.6.3
+ * Version:     3.6.4
  * Author:      WebDesignMike.com
  */
 
