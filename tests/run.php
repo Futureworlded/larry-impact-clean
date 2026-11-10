@@ -129,5 +129,37 @@ check( 'signed-in user with no rescue is refused', ! li_w9_can_view( 'r1', false
 check( 'missing rescue id is refused, even for admin', ! li_w9_can_view( '', true, '' ) );
 check( 'private link is recognised', li_w9_is_private_link( 'https://x.test/wp-admin/admin-ajax.php?action=li_w9_download&rescue_id=r1' ) && ! li_w9_is_private_link( $base . '/2026/10/w9.pdf' ) );
 
+echo "Merch page design tiles\n";
+li_test_load( 'shortcodes/shopify-storefront.php', array( 'li_storefront_swap_category_tiles' ) );
+$woo = '<ul class="products columns-4"><li class="product-category product first"><a href="x">Old A</a></li>
+<li class="product-category product"><a href="y">Old B</a></li>';
+$new = li_storefront_swap_category_tiles( $woo, '<li class="product-category product">Seasonal</li>' );
+check( 'old WooCommerce tiles are replaced by the Shopify tiles', false === strpos( $new, 'Old ' ) && false !== strpos( $new, 'Seasonal' ) );
+check( 'the product list wrapper is kept', 0 === strpos( $new, '<ul class="products columns-4">' ) );
+
+echo "New Printful products\n";
+li_test_load( 'shortcodes/shopify-catalog.php', array( 'li_product_has_payout', 'li_is_printful_sku', 'li_inherit_payouts', 'li_shopify_missing_merch' ) );
+$known = array(
+    '111_10087' => array( 'rescue_cents' => 850 ),
+    '222_10087' => array( 'rescue_cents' => 850 ),
+    '111_10088' => array( 'rescue_cents' => 850 ),
+    '333_9527'  => array( 'rescue_cents' => 1000 ),
+    '444_9527'  => array( 'rescue_cents' => 600 ),
+    '555_17160' => array( 'rescue_cents' => null ),
+    'MED-DRIP'  => array( 'rescue_cents' => 300 ),
+);
+$got = li_inherit_payouts( array( '900_10087', '900_10111', '901_9527', '902_17160', 'NEW-COFFEE' ), $known );
+check( 'same shirt style elsewhere sets the payout', 850 === ( $got['900_10087'] ?? null ) );
+check( 'a new color gets the payout of the same product\'s other sizes', 850 === ( $got['900_10111'] ?? null ) );
+check( 'styles with different payouts are left for Split Config', ! isset( $got['901_9527'] ) );
+check( 'unknown styles and non-Printful products get no payout', ! isset( $got['902_17160'] ) && ! isset( $got['NEW-COFFEE'] ) );
+$products = array(
+    array( 'id' => 'p1', 'variants' => array( 'nodes' => array( array( 'sku' => '900_10087' ), array( 'sku' => '900_10111' ) ) ) ),
+    array( 'id' => 'p2', 'variants' => array( 'nodes' => array( array( 'sku' => '111_10087' ) ) ) ),
+    array( 'id' => 'p3', 'variants' => array( 'nodes' => array( array( 'sku' => 'MED-DRIP' ) ) ) ),
+    array( 'id' => 'p4', 'variants' => array( 'nodes' => array() ) ),
+);
+check( 'only new Printful products are added to Merch', array( 'p1' ) === li_shopify_missing_merch( $products, array( 'p2' => true ) ) );
+
 echo $GLOBALS['li_test_failures'] ? "\n{$GLOBALS['li_test_failures']} failed\n" : "\nAll passed\n";
 exit( $GLOBALS['li_test_failures'] ? 1 : 0 );

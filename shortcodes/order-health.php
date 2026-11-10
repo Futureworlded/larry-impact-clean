@@ -885,7 +885,9 @@ function li_order_health_handle_post() {
             return '<div class="li-msg-err">' . esc_html( $sync->get_error_message() ) . '</div>';
         }
         li_shopify_catalog_gaps();
-        return '<div class="li-msg-ok">Read ' . esc_html( $sync['variants'] ) . ' Shopify products. Newly added to Larry: ' . esc_html( $sync['added'] ) . '.</div>';
+        $merch = li_shopify_add_new_merch();
+        $merch = is_wp_error( $merch ) ? 'failed (' . $merch->get_error_message() . ')' : $merch;
+        return '<div class="li-msg-ok">Read ' . esc_html( $sync['variants'] ) . ' Shopify products. Newly added to Larry: ' . esc_html( $sync['added'] ) . '. Payouts set from the same shirt style: ' . esc_html( $sync['payouts_set'] ) . '. New products added to Merch: ' . esc_html( $merch ) . '.</div>';
     }
 
     if ( 'catalog' === $action ) {

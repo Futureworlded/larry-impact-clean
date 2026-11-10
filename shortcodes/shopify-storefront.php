@@ -127,6 +127,13 @@ function li_storefront_design_order() {
 }
 
 function li_storefront_designs( $attr ) {
+    $columns = max( 1, intval( $attr['columns'] ?? 3 ) );
+    $items   = li_storefront_design_items( $columns );
+    return false === $items ? false : '<div class="woocommerce columns-' . $columns . '"><ul class="products columns-' . $columns . '">' . $items . '</ul></div>';
+}
+
+/** One WooCommerce category tile per Shopify merch design collection. */
+function li_storefront_design_items( $columns ) {
     $data = li_storefront_data();
     if ( empty( $data['collections'] ) ) {
         return false;
@@ -144,8 +151,8 @@ function li_storefront_designs( $attr ) {
         $pb = $order[ $b['handle'] ] ?? 1000;
         return $pa === $pb ? strnatcasecmp( $a['title'], $b['title'] ) : $pa - $pb;
     } );
-    $columns = max( 1, intval( $attr['columns'] ?? 3 ) );
-    $html    = '<div class="woocommerce columns-' . $columns . '"><ul class="products columns-' . $columns . '">';
+    $columns = max( 1, intval( $columns ) );
+    $html    = '';
     foreach ( array_values( $designs ) as $i => $c ) {
         $url   = 'https://' . li_storefront_store() . '/collections/' . rawurlencode( $c['handle'] );
         $pos   = 0 === $i % $columns ? ' first' : ( $columns - 1 === $i % $columns ? ' last' : '' );
@@ -154,7 +161,22 @@ function li_storefront_designs( $attr ) {
         $html .= '<img loading="lazy" decoding="async" src="' . esc_url( li_storefront_image( $c['image']['src'] ?? '' ) ) . '" alt="' . esc_attr( $c['title'] ) . '" width="300" height="300"> ';
         $html .= '<h2 class="woocommerce-loop-category__title"> ' . esc_html( $c['title'] ) . $count . ' </h2></a></li>';
     }
-    return $html . '</ul></div>';
+    return $html;
+}
+
+/** The WooCommerce Merch category page shows the same Shopify design tiles as the homepage. */
+add_filter( 'woocommerce_product_loop_start', 'li_storefront_merch_archive', 20 );
+function li_storefront_merch_archive( $html ) {
+    if ( ! li_homepage_from_shopify() || ! function_exists( 'is_product_category' ) || ! is_product_category( 'merch' ) ) {
+        return $html;
+    }
+    $columns = function_exists( 'wc_get_loop_prop' ) ? intval( wc_get_loop_prop( 'columns', 4 ) ) : 4;
+    $items   = li_storefront_design_items( $columns );
+    return false === $items ? $html : li_storefront_swap_category_tiles( $html, $items );
+}
+
+function li_storefront_swap_category_tiles( $html, $items ) {
+    return preg_replace( '#<li\b[^>]*\bclass="[^"]*\bproduct-category\b.*?</li>\s*#s', '', (string) $html ) . $items;
 }
 
 function li_storefront_is_merch_parent( $parent ) {
