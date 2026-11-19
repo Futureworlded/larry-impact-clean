@@ -3,7 +3,7 @@
  * Plugin Name: Larry Impact
  * Plugin URI:  https://larryimpact.com
  * Description: Powers all Larry Impact functionality.
- * Version:     3.6.6
+ * Version:     3.6.7
  * Author:      WebDesignMike.com
  */
 
@@ -61,6 +61,7 @@ $files = array(
     'w9-private.php',
     'rescue-modal.php',
     'stripe-webhook.php',
+    'public-privacy.php',
 );
 
 foreach ( $files as $file ) {
