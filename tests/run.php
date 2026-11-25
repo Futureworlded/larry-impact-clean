@@ -169,12 +169,13 @@ check( 'a price below the card fee never goes negative', 0 === li_music_rescue_c
 check( 'YouTube watch and short links embed', 'https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ?autoplay=1&rel=0' === li_music_video_embed( 'https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=5' ) && false !== strpos( li_music_video_embed( 'https://youtu.be/dQw4w9WgXcQ' ), 'dQw4w9WgXcQ' ) );
 check( 'Vimeo links embed', 'https://player.vimeo.com/video/76979871?autoplay=1' === li_music_video_embed( 'https://vimeo.com/76979871' ) );
 check( 'other links are not embedded', '' === li_music_video_embed( 'https://example.com/video' ) );
-$song = function( $title, $status, $url, $released = '' ) {
-    return array( 'title' => $title, 'status' => $status, 'onlineStoreUrl' => $url, 'tags' => array(), 'variants' => array( 'nodes' => array( array( 'legacyResourceId' => '1', 'price' => '1.50' ) ) ), 'released' => array( 'value' => $released ) );
+$song = function( $title, $status, $url, $released = '', $sku = 'PE-1' ) {
+    return array( 'title' => $title, 'status' => $status, 'onlineStoreUrl' => $url, 'tags' => array(), 'variants' => array( 'nodes' => array( array( 'legacyResourceId' => '1', 'price' => '1.50', 'sku' => $sku ) ) ), 'released' => array( 'value' => $released ) );
 };
 $nodes = array( $song( 'Old', 'ACTIVE', 'u', '2026-01-01' ), $song( 'Draft', 'DRAFT', null, '2026-12-01' ), $song( 'New', 'ACTIVE', 'u', '2026-11-01' ), $song( 'Gone', 'ARCHIVED', null ) );
 check( 'live site shows only published songs, newest first', array( 'New', 'Old' ) === array_column( li_music_parse_releases( $nodes, true ), 'title' ) );
 check( 'staging also previews drafts, never archived songs', array( 'Draft', 'New', 'Old' ) === array_column( li_music_parse_releases( $nodes, false ), 'title' ) );
+check( 'a song without a SKU gets no Buy button, since its sales could not be credited', array() === li_music_parse_releases( array( $song( 'NoSku', 'ACTIVE', 'u', '', '' ) ), true ) );
 
 echo $GLOBALS['li_test_failures'] ? "\n{$GLOBALS['li_test_failures']} failed\n" : "\nAll passed\n";
 exit( $GLOBALS['li_test_failures'] ? 1 : 0 );

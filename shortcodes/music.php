@@ -24,7 +24,7 @@ function li_music_releases() {
             nodes {
                 title handle status onlineStoreUrl tags
                 featuredImage { url altText }
-                variants(first: 1) { nodes { legacyResourceId price } }
+                variants(first: 1) { nodes { legacyResourceId price sku } }
                 artist: metafield(namespace: "music", key: "artist") { value }
                 video: metafield(namespace: "music", key: "video") { value }
                 released: metafield(namespace: "music", key: "release_date") { value }
@@ -64,7 +64,7 @@ function li_music_parse_releases( $nodes, $live ) {
     foreach ( $nodes as $p ) {
         $published = 'ACTIVE' === ( $p['status'] ?? '' ) && ! empty( $p['onlineStoreUrl'] );
         $variant   = $p['variants']['nodes'][0] ?? null;
-        if ( ! $variant || ( $live && ! $published ) || 'ARCHIVED' === ( $p['status'] ?? '' ) ) {
+        if ( ! $variant || '' === trim( (string) ( $variant['sku'] ?? '' ) ) || ( $live && ! $published ) || 'ARCHIVED' === ( $p['status'] ?? '' ) ) {
             continue;
         }
         $ref     = $p['preview']['reference'] ?? array();
