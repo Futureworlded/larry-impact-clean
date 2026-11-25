@@ -150,6 +150,7 @@ function li_shopify_sync_products() {
     $skus    = array();
     $new     = array();
     $unpaid  = array();
+    $music   = array();
     foreach ( $variants as $variant ) {
         $sku = $variant['sku'];
         if ( '' === $sku ) {
@@ -162,6 +163,7 @@ function li_shopify_sync_products() {
             continue;
         }
         $name        = $variant['name'];
+        $is_music    = 0 === strcasecmp( (string) ( $variant['type'] ?? '' ), 'Music' );
         $price_cents = max( 0, intval( round( floatval( $variant['price'] ) * 100 ) ) );
         if ( isset( $known[ $sku ] ) ) {
             $existing = $known[ $sku ];
@@ -179,7 +181,11 @@ function li_shopify_sync_products() {
                 li_db_patch( 'products?id=eq.' . urlencode( $existing['id'] ), $changes );
             }
             if ( ! li_product_has_payout( $existing ) ) {
-                $unpaid[] = $sku;
+                if ( $is_music ) {
+                    $music[ $sku ] = li_music_rescue_cents( $price_cents );
+                } else {
+                    $unpaid[] = $sku;
+                }
             }
             continue;
         }
@@ -190,11 +196,12 @@ function li_shopify_sync_products() {
             'price_cents' => $price_cents,
             'cost_cents'  => 0,
             'active'      => true,
-            'format'      => 'Merch',
-            'rescue_cents' => null,
+            'format'      => $is_music ? 'Music' : 'Merch',
+            'rescue_cents' => $is_music ? li_music_rescue_cents( $price_cents ) : null,
         );
     }
-    $inherited = li_inherit_payouts( array_merge( $unpaid, array_keys( $new ) ), $known );
+    // Songs and albums: the rescue share of the price after card fees (Music page settings).
+    $inherited = $music + li_inherit_payouts( array_merge( $unpaid, array_keys( $new ) ), $known );
     foreach ( $inherited as $sku => $cents ) {
         if ( isset( $new[ $sku ] ) ) {
             $new[ $sku ]['rescue_cents'] = $cents;
