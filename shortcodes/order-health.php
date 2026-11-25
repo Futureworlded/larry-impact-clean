@@ -656,7 +656,7 @@ function li_shopify_active_variants() {
         $query  = 'query LarryVariants($cursor: String) {
             productVariants(first: 250, after: $cursor) {
                 pageInfo { hasNextPage endCursor }
-                nodes { sku displayName price product { status } }
+                nodes { sku displayName price product { status productType } }
             }
         }';
         $cursor = null;
@@ -667,7 +667,7 @@ function li_shopify_active_variants() {
             }
             foreach ( (array) ( $data['productVariants']['nodes'] ?? array() ) as $v ) {
                 if ( 'ACTIVE' === ( $v['product']['status'] ?? '' ) ) {
-                    $out[] = array( 'sku' => trim( (string) ( $v['sku'] ?? '' ) ), 'name' => (string) ( $v['displayName'] ?? '' ), 'price' => (string) ( $v['price'] ?? '' ) );
+                    $out[] = array( 'sku' => trim( (string) ( $v['sku'] ?? '' ) ), 'name' => (string) ( $v['displayName'] ?? '' ), 'price' => (string) ( $v['price'] ?? '' ), 'type' => (string) ( $v['product']['productType'] ?? '' ) );
                 }
             }
             if ( empty( $data['productVariants']['pageInfo']['hasNextPage'] ) ) {
@@ -692,6 +692,7 @@ function li_shopify_active_variants() {
                     'sku'   => trim( (string) ( $v['sku'] ?? '' ) ),
                     'name'  => 'Default Title' === $title ? $name : $name . ' - ' . $title,
                     'price' => (string) ( $v['price'] ?? '' ),
+                    'type'  => (string) ( $product['product_type'] ?? '' ),
                 );
             }
         }
