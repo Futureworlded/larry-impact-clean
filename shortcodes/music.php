@@ -297,7 +297,7 @@ body.li-music-page .fl-content-full .container,body.li-music-page .fl-page-conte
 .pe-big{display:inline-flex;width:auto;font-size:clamp(17px,2.2vw,26px);padding:14px 36px;border-radius:40px}
 .pe-modal{position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:100000;display:flex;align-items:center;justify-content:center;padding:20px}
 .pe-modal[hidden]{display:none}
-.pe-modal-box{position:relative;width:min(960px,100%)}
+.pe-modal-box{position:relative;width:min(960px,100%,calc((100vh - 120px) * 16 / 9))}
 .pe-frame{aspect-ratio:16/9;background:#000}
 .pe-frame iframe{width:100%;height:100%;border:0}
 .pe-close{position:absolute;top:-44px;right:0;background:none;border:0;color:#fff;font-size:38px;line-height:1;cursor:pointer}
