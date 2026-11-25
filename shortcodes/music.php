@@ -241,7 +241,7 @@ body.li-music-page .fl-content-full .container,body.li-music-page .fl-page-conte
 .pe-sr{position:absolute!important;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
 .pe-hero{max-width:1600px;margin:0 auto}
 .pe-hero img{display:block;width:100%;height:auto}
-.pe-steps{list-style:none;margin:0 auto;padding:18px 16px;max-width:1200px;display:grid;grid-template-columns:repeat(4,1fr);border-top:1px solid #4a3410;border-bottom:1px solid #4a3410}
+.pe-music .pe-steps{list-style:none;margin:0 auto;padding:18px 16px;max-width:1200px;display:grid;grid-template-columns:repeat(4,1fr);border-top:1px solid #4a3410;border-bottom:1px solid #4a3410}
 .pe-steps li{display:flex;align-items:center;gap:14px;justify-content:center;padding:4px 10px;border-left:1px solid #3a2a0e}
 .pe-steps li:first-child{border-left:0}
 .pe-steps svg{width:38px;height:38px;fill:none;stroke:var(--gold);stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;flex:none}
