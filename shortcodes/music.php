@@ -144,22 +144,30 @@ function li_music_shortcode( $attr ) {
     $releases = li_music_releases();
     $limit    = max( 1, intval( $attr['limit'] ) );
     $store    = 'https://' . li_storefront_store();
-    $hero     = plugins_url( 'assets/paws-effect-records-hero.webp', dirname( __FILE__ ) );
+    $asset    = function ( $name ) {
+        return plugins_url( 'assets/paws-effect-' . $name . '.webp', dirname( __FILE__ ) );
+    };
+    $hero     = $asset( 'records-hero' );
+    $art_vars = array();
+    foreach ( array( 'flare-left', 'flare-right', 'divider', 'impact', 'artist' ) as $name ) {
+        $art_vars[] = '--pe-' . $name . ':url(' . esc_url( $asset( $name ) ) . ')';
+    }
     $rescue   = function_exists( 'li_default_rescue' ) ? li_default_rescue() : null;
 
     ob_start();
     ?>
-    <div class="pe-music" data-store="<?php echo esc_url( $store ); ?>" data-rescue="<?php echo esc_attr( $rescue['slug'] ?? '' ); ?>">
+    <div class="pe-music" style="<?php echo esc_attr( implode( ';', $art_vars ) ); ?>" data-store="<?php echo esc_url( $store ); ?>" data-rescue="<?php echo esc_attr( $rescue['slug'] ?? '' ); ?>">
         <section class="pe-hero">
             <img src="<?php echo esc_url( $hero ); ?>" width="1600" height="819" alt="PAWS &amp; EFFECT Records. Songs That Save. Real artists. Real music. Real impact." fetchpriority="high">
             <h1 class="pe-sr">PAWS &amp; EFFECT Records: Music &amp; Videos</h1>
         </section>
+        <img class="pe-flare" src="<?php echo esc_url( $asset( 'flare' ) ); ?>" width="1600" height="49" alt="">
 
         <ul class="pe-steps">
-            <li><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 14v-2a8 8 0 0 1 16 0v2M4 14h3v6H5a1 1 0 0 1-1-1v-5zm16 0h-3v6h2a1 1 0 0 0 1-1v-5z"/></svg><span><b>Listen</b>Preview the music</span></li>
-            <li><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m-5-5 5 5 5-5M4 17v3h16v-3"/></svg><span><b>Download</b>Get the song or album</span></li>
-            <li><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="7" cy="9" r="1.8"/><circle cx="12" cy="6.5" r="1.8"/><circle cx="17" cy="9" r="1.8"/><path d="M12 12c-3 0-5.5 4-5.5 5.5S8.5 20 12 20s5.5-1 5.5-2.5S15 12 12 12z"/></svg><span><b>Support</b>Choose your rescue</span></li>
-            <li><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z"/></svg><span><b>Save lives</b>Turn music into impact</span></li>
+            <li><img src="<?php echo esc_url( $asset( 'icon-listen' ) ); ?>" width="201" height="144" alt=""><span><b>Listen</b>Preview the music</span></li>
+            <li><img src="<?php echo esc_url( $asset( 'icon-download' ) ); ?>" width="159" height="144" alt=""><span><b>Download</b>Get the song or album</span></li>
+            <li><img src="<?php echo esc_url( $asset( 'icon-support' ) ); ?>" width="162" height="144" alt=""><span><b>Support</b>Choose your rescue</span></li>
+            <li><img src="<?php echo esc_url( $asset( 'icon-save-lives' ) ); ?>" width="158" height="144" alt=""><span><b>Save lives</b>Turn music into impact</span></li>
         </ul>
 
         <section class="pe-releases">
@@ -241,17 +249,17 @@ body.li-music-page .fl-content-full .container,body.li-music-page .fl-page-conte
 .pe-sr{position:absolute!important;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
 .pe-hero{max-width:1600px;margin:0 auto}
 .pe-hero img{display:block;width:100%;height:auto}
-html body .pe-music ul.pe-steps{list-style:none;margin:0 auto;padding:18px 16px;max-width:1200px;display:grid;grid-template-columns:repeat(4,1fr);border-top:1px solid #4a3410;border-bottom:1px solid #4a3410}
-.pe-steps li{display:flex;align-items:center;gap:14px;justify-content:center;padding:4px 10px;border-left:1px solid #3a2a0e}
-.pe-steps li:first-child{border-left:0}
-.pe-steps svg{width:38px;height:38px;fill:none;stroke:var(--gold);stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;flex:none}
-.pe-steps li:nth-child(3) svg{fill:var(--gold);stroke:none}
+html body .pe-music ul.pe-steps{list-style:none;margin:0 auto;padding:18px 16px;max-width:1200px;display:grid;grid-template-columns:repeat(4,1fr);border-bottom:1px solid #4a3410}
+.pe-flare{display:block;width:min(1200px,100%);height:auto;margin:-6px auto 0}
+.pe-steps li{display:flex;align-items:center;gap:14px;justify-content:center;padding:4px 10px}
+.pe-steps li+li{background:var(--pe-divider) left center/auto 64px no-repeat}
+.pe-steps img{height:46px;width:auto;flex:none;margin:0}
 .pe-steps b{display:block;font:600 19px/1.1 Oswald,Helvetica,sans-serif;text-transform:uppercase;color:#fff;letter-spacing:.5px}
 .pe-steps span{font-size:13px;color:#bbb}
 .pe-releases{max-width:1200px;margin:0 auto;padding:40px 20px 50px}
 .pe-title{font:700 clamp(26px,3.4vw,40px)/1.2 Cinzel,Georgia,serif;text-transform:uppercase;letter-spacing:4px;color:#fff;text-align:center;margin:0 0 30px;display:flex;align-items:center;gap:20px}
-.pe-title:before,.pe-title:after{content:"";flex:1;height:2px;background:linear-gradient(90deg,transparent,var(--gold))}
-.pe-title:after{background:linear-gradient(90deg,var(--gold),transparent)}
+.pe-title:before,.pe-title:after{content:"";flex:1;height:24px;background:var(--pe-flare-left) right center/100% 100% no-repeat}
+.pe-title:after{background-image:var(--pe-flare-right);background-position:left center}
 .pe-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:34px}
 .pe-card{text-align:center;display:flex;flex-direction:column}
 .pe-card .pe-player{margin-top:auto}
@@ -283,12 +291,12 @@ html body .pe-music ul.pe-steps{list-style:none;margin:0 auto;padding:18px 16px;
 .pe-all{display:inline-flex;width:auto;padding:10px 34px;background:#000;color:var(--gold)!important;border:2px solid var(--gold);border-radius:30px}
 .pe-music.pe-show-all .pe-all{display:none}
 .pe-empty{text-align:center;color:#ccc;font-size:18px}
-.pe-impact{background:linear-gradient(90deg,rgba(0,0,0,.2),rgba(0,0,0,.75) 45%,rgba(0,0,0,.8)),linear-gradient(180deg,#1a0a02 0%,#8a3a07 45%,#e2861c 70%,#3a1604 100%);border-top:1px solid #6b4612;border-bottom:1px solid #6b4612;padding:44px 20px}
-.pe-impact div{max-width:820px;margin:0 auto 0 max(20px,calc(50% - 300px))}
+.pe-impact{background:#000 var(--pe-impact) center/cover no-repeat;border-top:1px solid #6b4612;border-bottom:1px solid #6b4612;padding:30px 20px;min-height:16vw;display:flex;align-items:center}
+.pe-impact div{max-width:min(860px,62vw);margin:0 0 0 22%;text-shadow:0 2px 6px rgba(0,0,0,.85)}
 .pe-impact h2{font:italic 700 clamp(24px,3.2vw,38px)/1.15 Oswald,Helvetica,sans-serif;text-transform:uppercase;color:var(--gold2);margin:0 0 10px}
 .pe-impact h2 span{color:#fff}
-.pe-impact p{color:#f1f1f1;font-size:18px;line-height:1.5;margin:0}
-.pe-artist-cta{text-align:center;padding:60px 20px 70px;background:radial-gradient(ellipse at 15% 60%,rgba(244,183,63,.25),transparent 45%),#000}
+.pe-impact p{color:#fff;font-weight:700;font-size:18px;line-height:1.5;margin:0}
+.pe-artist-cta{text-align:center;padding:50px 20px 50px 30%;min-height:33vw;display:flex;flex-direction:column;justify-content:center;align-items:center;background:#000 var(--pe-artist) left center/cover no-repeat}
 .pe-artist-cta h2{font:italic 700 clamp(32px,5vw,62px)/1.05 Oswald,Helvetica,sans-serif;text-transform:uppercase;color:#fff;margin:0 0 8px}
 .pe-artist-cta h2 span{color:var(--gold2)}
 .pe-artist-cta .pe-tag{font-style:italic;font-size:20px;color:#eee;margin:0 0 18px}
@@ -301,7 +309,7 @@ html body .pe-music ul.pe-steps{list-style:none;margin:0 auto;padding:18px 16px;
 .pe-frame{aspect-ratio:16/9;background:#000}
 .pe-frame iframe{width:100%;height:100%;border:0}
 .pe-close{position:absolute;top:-44px;right:0;background:none;border:0;color:#fff;font-size:38px;line-height:1;cursor:pointer}
-@media (max-width:768px){html body .pe-music ul.pe-steps{grid-template-columns:repeat(2,1fr);gap:14px 0}.pe-steps li{justify-content:flex-start;border-left:0}.pe-steps b{font-size:16px}.pe-impact div{margin:0 auto}.pe-impact p,.pe-artist-cta p{font-size:16px}}
+@media (max-width:768px){html body .pe-music ul.pe-steps{grid-template-columns:repeat(2,1fr);gap:14px 0}.pe-steps li,.pe-steps li+li{justify-content:flex-start;background:none}.pe-steps img{height:36px}.pe-impact{background-image:linear-gradient(rgba(0,0,0,.55),rgba(0,0,0,.55)),var(--pe-impact);padding:34px 20px}.pe-impact div{max-width:none;margin:0 auto}.pe-artist-cta{padding:44px 20px;background-image:linear-gradient(rgba(0,0,0,.6),rgba(0,0,0,.6)),var(--pe-artist)}.pe-steps b{font-size:16px}.pe-impact div{margin:0 auto}.pe-impact p,.pe-artist-cta p{font-size:16px}}
 CSS;
 }
 
